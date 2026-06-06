@@ -6,7 +6,11 @@ from sqlalchemy import Select, delete, func, select
 from sqlalchemy.orm import Session
 
 from app.domain import (
+    DEFAULT_PAC_EXECUTION_SCHEDULE,
     EtfMetadata,
+    HistoricalPriceQuote,
+    PacExecution,
+    PacExecutionRow,
     PacSimulationPreview,
     PacSimulationRow,
     PortfolioPosition,
@@ -17,6 +21,8 @@ from app.db.models import (
     EtfMetadataCacheModel,
     EtfModel,
     HoldingModel,
+    PacExecutionModel,
+    PacExecutionRowModel,
     PacSimulationModel,
     PacSimulationRowModel,
     PortfolioSnapshotModel,
@@ -27,6 +33,7 @@ from app.db.models import (
 DEFAULT_MONTHLY_PAC = 0.0
 DEFAULT_SETTINGS = {
     "monthly_pac": str(DEFAULT_MONTHLY_PAC),
+    "pac_execution_schedule": DEFAULT_PAC_EXECUTION_SCHEDULE,
     "auto_update_enabled": "false",
     "auto_update_frequency": "daily",
     "auto_snapshot_enabled": "true",
@@ -96,8 +103,11 @@ class PortfolioRepository:
                 round_up=False,
                 real_monthly_pac=monthly_pac,
                 rows=rows,
+                execution_schedule=self.get_setting("pac_execution_schedule", DEFAULT_PAC_EXECUTION_SCHEDULE)
+                or DEFAULT_PAC_EXECUTION_SCHEDULE,
             ),
             name="PAC attivo importato",
+            applied_at=datetime.now(UTC),
         )
 
     def list_positions(self) -> list[PortfolioPosition]:
@@ -191,6 +201,7 @@ class PortfolioRepository:
     def replace_portfolio_from_preview(self, preview: PacSimulationPreview) -> None:
         self.clear_portfolio()
         self.set_setting("monthly_pac", str(float(preview.monthly_pac)))
+        self.set_setting("pac_execution_schedule", preview.execution_schedule)
         for row in preview.rows:
             metadata = self.save_etf_metadata(row.metadata)
             etf = EtfModel(
@@ -237,6 +248,7 @@ class PortfolioRepository:
         model = PacSimulationModel(
             name=(name or "Simulazione PAC").strip() or "Simulazione PAC",
             monthly_pac=float(preview.monthly_pac),
+            execution_schedule=preview.execution_schedule,
             round_up=bool(preview.round_up),
             real_monthly_pac=float(preview.real_monthly_pac),
             applied_at=applied_at,
@@ -294,6 +306,141 @@ class PortfolioRepository:
         model = self.session.get(PacSimulationModel, simulation_id)
         if not model:
             raise ValueError(f"Simulation not found: {simulation_id}")
+        self.session.delete(model)
+
+    def get_active_simulation(self) -> SavedPacSimulation | None:
+        model = self.session.scalars(
+            select(PacSimulationModel)
+            .where(PacSimulationModel.applied_at.is_not(None))
+            .order_by(PacSimulationModel.applied_at.desc(), PacSimulationModel.id.desc())
+            .limit(1)
+        ).first()
+        return self._to_saved_simulation(model) if model else None
+
+    def list_pac_executions(self) -> list[PacExecution]:
+        models = self.session.scalars(
+            select(PacExecutionModel).order_by(
+                PacExecutionModel.execution_date.desc(),
+                PacExecutionModel.id.desc(),
+            )
+        )
+        return [self._to_pac_execution(model) for model in models]
+
+    def get_pac_execution(self, execution_id: int) -> PacExecution | None:
+        model = self.session.get(PacExecutionModel, execution_id)
+        return self._to_pac_execution(model) if model else None
+
+    def latest_pac_execution(
+        self,
+        simulation_id: int,
+        before: date | None = None,
+    ) -> PacExecution | None:
+        model = self._latest_pac_execution_model(simulation_id, before)
+        return self._to_pac_execution(model) if model else None
+
+    def latest_pac_execution_date(self, simulation_id: int) -> date | None:
+        return self.session.scalar(
+            select(func.max(PacExecutionModel.execution_date)).where(
+                PacExecutionModel.simulation_id == simulation_id
+            )
+        )
+
+    def save_pac_execution_from_simulation(
+        self,
+        simulation: SavedPacSimulation,
+        execution_date: date,
+        name: str | None = None,
+        manual: bool = False,
+        quotes: dict[str, HistoricalPriceQuote] | None = None,
+    ) -> PacExecution:
+        model = self.session.scalar(
+            select(PacExecutionModel).where(
+                PacExecutionModel.simulation_id == simulation.id,
+                PacExecutionModel.execution_date == execution_date,
+            )
+        )
+        if not model:
+            model = PacExecutionModel(
+                simulation_id=simulation.id,
+                simulation_name=simulation.name,
+                execution_schedule=simulation.execution_schedule,
+                execution_date=execution_date,
+                name=(name or "").strip() or f"Esecuzione PAC {execution_date:%d/%m/%Y}",
+                manual=manual,
+            )
+            self.session.add(model)
+            self.session.flush()
+        else:
+            model.simulation_name = simulation.name
+            model.execution_schedule = simulation.execution_schedule
+            model.name = (name or model.name).strip() or model.name
+            model.manual = bool(manual or model.manual)
+            model.rows.clear()
+
+        previous = self._latest_pac_execution_model(simulation.id, before=execution_date)
+        previous_prices = {
+            row.isin: row.current_price
+            for row in previous.rows
+            if row.current_price is not None
+        } if previous else {}
+        quotes = quotes or {}
+
+        for index, row in enumerate(simulation.rows):
+            quote = quotes.get(row.metadata.isin)
+            current_price = quote.price if quote else None
+            previous_price = previous_prices.get(row.metadata.isin)
+            price_diff = (
+                current_price - previous_price
+                if current_price is not None and previous_price is not None
+                else None
+            )
+            price_diff_pct = (
+                price_diff / previous_price
+                if price_diff is not None and previous_price
+                else None
+            )
+            model.rows.append(
+                PacExecutionRowModel(
+                    sort_order=index,
+                    asset_class=row.asset_class,
+                    segment=row.metadata.segment,
+                    name=row.metadata.name,
+                    isin=row.metadata.isin,
+                    invested_amount=float(row.effective_amount),
+                    currency=row.metadata.currency,
+                    current_price=current_price,
+                    current_price_date=quote.price_date if quote else None,
+                    current_price_source=quote.source if quote else "",
+                    previous_price=previous_price,
+                    price_diff=price_diff,
+                    price_diff_pct=price_diff_pct,
+                )
+            )
+        self.session.flush()
+        return self._to_pac_execution(model)
+
+    def update_pac_execution_name(self, execution_id: int, name: str) -> PacExecution:
+        model = self.session.get(PacExecutionModel, execution_id)
+        if not model:
+            raise ValueError(f"PAC execution not found: {execution_id}")
+        model.name = name.strip() or model.name
+        model.manual = True
+        self.session.flush()
+        return self._to_pac_execution(model)
+
+    def update_pac_execution_row_amount(self, row_id: int, invested_amount: float) -> PacExecution:
+        row = self.session.get(PacExecutionRowModel, row_id)
+        if not row:
+            raise ValueError(f"PAC execution row not found: {row_id}")
+        row.invested_amount = float(invested_amount)
+        row.execution.manual = True
+        self.session.flush()
+        return self._to_pac_execution(row.execution)
+
+    def delete_pac_execution(self, execution_id: int) -> None:
+        model = self.session.get(PacExecutionModel, execution_id)
+        if not model:
+            raise ValueError(f"PAC execution not found: {execution_id}")
         self.session.delete(model)
 
     def find_price(self, etf_id: int, target_date: date) -> float | None:
@@ -375,6 +522,18 @@ class PortfolioRepository:
     def _price_query(self, etf_id: int) -> Select[tuple[float]]:
         return select(PriceHistoryModel.price).where(PriceHistoryModel.etf_id == etf_id)
 
+    def _latest_pac_execution_model(
+        self,
+        simulation_id: int,
+        before: date | None = None,
+    ) -> PacExecutionModel | None:
+        stmt = select(PacExecutionModel).where(PacExecutionModel.simulation_id == simulation_id)
+        if before is not None:
+            stmt = stmt.where(PacExecutionModel.execution_date < before)
+        return self.session.scalars(
+            stmt.order_by(PacExecutionModel.execution_date.desc(), PacExecutionModel.id.desc()).limit(1)
+        ).first()
+
     @staticmethod
     def _to_position(etf: EtfModel, holding: HoldingModel | None) -> PortfolioPosition:
         return PortfolioPosition(
@@ -430,12 +589,28 @@ class PortfolioRepository:
             id=model.id,
             name=model.name,
             monthly_pac=model.monthly_pac,
+            execution_schedule=model.execution_schedule,
             round_up=model.round_up,
             real_monthly_pac=model.real_monthly_pac,
             created_at=model.created_at,
             updated_at=model.updated_at,
             applied_at=model.applied_at,
             rows=[_to_simulation_row(row) for row in model.rows],
+        )
+
+    @staticmethod
+    def _to_pac_execution(model: PacExecutionModel) -> PacExecution:
+        return PacExecution(
+            id=model.id,
+            simulation_id=model.simulation_id,
+            simulation_name=model.simulation_name,
+            execution_schedule=model.execution_schedule,
+            name=model.name,
+            execution_date=model.execution_date,
+            manual=model.manual,
+            created_at=model.created_at,
+            updated_at=model.updated_at,
+            rows=[_to_pac_execution_row(row) for row in model.rows],
         )
 
 
@@ -466,10 +641,29 @@ def _to_simulation_row(model: PacSimulationRowModel) -> PacSimulationRow:
     )
 
 
+def _to_pac_execution_row(model: PacExecutionRowModel) -> PacExecutionRow:
+    return PacExecutionRow(
+        id=model.id,
+        asset_class=model.asset_class,
+        segment=model.segment,
+        name=model.name,
+        isin=model.isin,
+        invested_amount=model.invested_amount,
+        currency=model.currency,
+        current_price=model.current_price,
+        current_price_date=model.current_price_date,
+        current_price_source=model.current_price_source,
+        previous_price=model.previous_price,
+        price_diff=model.price_diff,
+        price_diff_pct=model.price_diff_pct,
+    )
+
+
 def _preview_from_saved(simulation: SavedPacSimulation) -> PacSimulationPreview:
     return PacSimulationPreview(
         monthly_pac=simulation.monthly_pac,
         round_up=simulation.round_up,
         real_monthly_pac=simulation.real_monthly_pac,
         rows=simulation.rows,
+        execution_schedule=simulation.execution_schedule,
     )

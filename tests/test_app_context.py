@@ -2,7 +2,7 @@ from datetime import date
 
 from app.app_context import AppContext
 from app.db.database import create_session_factory, init_database
-from app.domain import EtfMetadata, PacEtfAllocation
+from app.domain import DEFAULT_PAC_EXECUTION_SCHEDULE, EtfMetadata, PacEtfAllocation
 
 
 def make_context(tmp_path):
@@ -71,7 +71,9 @@ def test_app_context_simulates_and_persists_manual_pac(tmp_path):
     assert len(positions) == 1
     assert positions[0].isin == "IE000XZSV718"
     assert positions[0].target_pct == 1
-    assert [simulation.name for simulation in context.saved_pac_simulations()] == ["Simulazione PAC"]
+    simulations = context.saved_pac_simulations()
+    assert [simulation.name for simulation in simulations] == ["Simulazione PAC"]
+    assert simulations[0].execution_schedule == DEFAULT_PAC_EXECUTION_SCHEDULE
 
 
 def test_app_context_saves_multiple_simulations_and_applies_selected_one(tmp_path):
@@ -106,6 +108,7 @@ def test_app_context_saves_multiple_simulations_and_applies_selected_one(tmp_pat
     assert [simulation.name for simulation in context.saved_pac_simulations()] == ["Seconda", "Prima"]
     assert saved_first.id != saved_second.id
     assert context.monthly_pac() == 250
+    assert context.settings()["pac_execution_schedule"] == DEFAULT_PAC_EXECUTION_SCHEDULE
 
 
 def test_app_context_deletes_selected_saved_simulation(tmp_path):

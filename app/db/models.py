@@ -102,6 +102,7 @@ class PacSimulationModel(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     monthly_pac: Mapped[float] = mapped_column(Float, nullable=False)
+    execution_schedule: Mapped[str] = mapped_column(String(80), default="Mensile dal 2 del mese", nullable=False)
     round_up: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     real_monthly_pac: Mapped[float] = mapped_column(Float, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, nullable=False)
@@ -144,6 +145,54 @@ class PacSimulationRowModel(Base):
     price_source: Mapped[str] = mapped_column(String(80), default="justETF metadata", nullable=False)
 
     simulation: Mapped[PacSimulationModel] = relationship(back_populates="rows")
+
+
+class PacExecutionModel(Base):
+    __tablename__ = "pac_executions"
+    __table_args__ = (UniqueConstraint("simulation_id", "execution_date", name="uq_pac_execution_sim_date"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    simulation_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
+    simulation_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    execution_schedule: Mapped[str] = mapped_column(String(80), nullable=False)
+    name: Mapped[str] = mapped_column(String(180), nullable=False)
+    execution_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    manual: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=utc_now,
+        onupdate=utc_now,
+        nullable=False,
+    )
+
+    rows: Mapped[list[PacExecutionRowModel]] = relationship(
+        back_populates="execution",
+        cascade="all, delete-orphan",
+        order_by="PacExecutionRowModel.sort_order",
+    )
+
+
+class PacExecutionRowModel(Base):
+    __tablename__ = "pac_execution_rows"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    execution_id: Mapped[int] = mapped_column(ForeignKey("pac_executions.id"), nullable=False, index=True)
+    sort_order: Mapped[int] = mapped_column(default=0, nullable=False)
+    asset_class: Mapped[str] = mapped_column(String(80), nullable=False)
+    segment: Mapped[str] = mapped_column(String(160), nullable=False)
+    name: Mapped[str] = mapped_column(String(260), nullable=False)
+    isin: Mapped[str] = mapped_column(String(12), nullable=False, index=True)
+    invested_amount: Mapped[float] = mapped_column(Float, nullable=False)
+    currency: Mapped[str] = mapped_column(String(8), default="EUR", nullable=False)
+    current_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    current_price_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    current_price_source: Mapped[str] = mapped_column(String(80), default="", nullable=False)
+    previous_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    price_diff: Mapped[float | None] = mapped_column(Float, nullable=True)
+    price_diff_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    execution: Mapped[PacExecutionModel] = relationship(back_populates="rows")
 
 
 class PortfolioSnapshotModel(Base):

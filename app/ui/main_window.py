@@ -3,8 +3,8 @@ from __future__ import annotations
 import customtkinter as ctk
 
 from app.app_context import AppContext
-from app.ui.allocation_page import AllocationPage
 from app.ui.dashboard import DashboardPage
+from app.ui.pac_executions_page import PacExecutionsPage
 from app.ui.pac_simulation_page import PacSimulationPage
 from app.ui.performance_page import PerformancePage
 from app.ui.rebalance_page import RebalancePage
@@ -36,7 +36,7 @@ class MainWindow(ctk.CTk):
         self.pages = {
             "Dashboard": DashboardPage(self.content, context),
             "Simula ripartizione": PacSimulationPage(self.content, context),
-            "Ripartizione": AllocationPage(self.content, context),
+            "Esecuzioni PAC": PacExecutionsPage(self.content, context),
             "Ribilanciamento": RebalancePage(self.content, context),
             "Performance": PerformancePage(self.content, context),
             "Impostazioni": SettingsPage(self.content, context),
@@ -76,3 +76,13 @@ class MainWindow(ctk.CTk):
         if settings.get("auto_update_enabled", "false") == "true" and settings.get("auto_update_frequency") == "startup":
             self.context.update_prices()
             self.pages["Dashboard"].refresh()
+        try:
+            created = self.context.ensure_due_pac_executions()
+        except Exception as exc:
+            self.status.configure(text=f"Esecuzioni PAC: {exc}")
+            return
+        if created:
+            page = self.pages.get("Esecuzioni PAC")
+            if page is not None and hasattr(page, "refresh"):
+                page.refresh()
+            self.status.configure(text=f"Esecuzioni PAC create: {len(created)}")

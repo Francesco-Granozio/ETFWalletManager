@@ -3,6 +3,19 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 
+LEGACY_PAC_EXECUTION_SCHEDULE = "Mensile dal 1 del mese"
+DEFAULT_PAC_EXECUTION_SCHEDULE = "Mensile dal 2 del mese"
+PAC_EXECUTION_SCHEDULE_OPTIONS = (
+    "Settimanale dal 2 del mese",
+    "Settimanale dal 16 del mese",
+    "2 volte al mese dal 2 del mese",
+    "2 volte al mese dal 16 del mese",
+    DEFAULT_PAC_EXECUTION_SCHEDULE,
+    "Mensile dal 16 del mese",
+    "Ogni 3 mesi dal 2 del mese",
+    "Ogni 3 mesi dal 16 del mese",
+)
+
 
 @dataclass(slots=True)
 class PortfolioPosition:
@@ -113,6 +126,15 @@ class PriceQuote:
 
 
 @dataclass(slots=True)
+class HistoricalPriceQuote:
+    isin: str
+    price: float
+    price_date: date
+    source: str
+    currency: str = "EUR"
+
+
+@dataclass(slots=True)
 class PriceUpdateResult:
     isin: str
     ok: bool
@@ -159,6 +181,7 @@ class PacSimulationPreview:
     round_up: bool
     real_monthly_pac: float
     rows: list[PacSimulationRow]
+    execution_schedule: str = DEFAULT_PAC_EXECUTION_SCHEDULE
 
 
 @dataclass(slots=True)
@@ -172,3 +195,39 @@ class SavedPacSimulation:
     updated_at: datetime
     applied_at: datetime | None
     rows: list[PacSimulationRow]
+    execution_schedule: str = DEFAULT_PAC_EXECUTION_SCHEDULE
+
+
+@dataclass(slots=True)
+class PacExecutionRow:
+    id: int
+    asset_class: str
+    segment: str
+    name: str
+    isin: str
+    invested_amount: float
+    currency: str
+    current_price: float | None = None
+    current_price_date: date | None = None
+    current_price_source: str = ""
+    previous_price: float | None = None
+    price_diff: float | None = None
+    price_diff_pct: float | None = None
+
+
+@dataclass(slots=True)
+class PacExecution:
+    id: int
+    simulation_id: int | None
+    simulation_name: str
+    execution_schedule: str
+    name: str
+    execution_date: date
+    manual: bool
+    created_at: datetime
+    updated_at: datetime
+    rows: list[PacExecutionRow]
+
+    @property
+    def total_invested(self) -> float:
+        return sum(row.invested_amount for row in self.rows)

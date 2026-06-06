@@ -2,7 +2,7 @@ from datetime import date
 
 import pytest
 
-from app.domain import EtfMetadata, PacEtfAllocation
+from app.domain import DEFAULT_PAC_EXECUTION_SCHEDULE, PAC_EXECUTION_SCHEDULE_OPTIONS, EtfMetadata, PacEtfAllocation
 from app.services.pac_simulation_service import (
     PacSimulationValidationError,
     calculate_pac_simulation,
@@ -58,6 +58,30 @@ def test_pac_simulation_calculates_total_allocations_and_rounds_up_amounts():
     assert preview.rows[0].effective_amount == 23
     assert preview.rows[1].effective_amount == 19
     assert preview.real_monthly_pac == 102
+    assert preview.execution_schedule == DEFAULT_PAC_EXECUTION_SCHEDULE
+
+
+def test_pac_execution_default_is_monthly_from_day_two():
+    assert DEFAULT_PAC_EXECUTION_SCHEDULE == "Mensile dal 2 del mese"
+    assert "Mensile dal 1 del mese" not in PAC_EXECUTION_SCHEDULE_OPTIONS
+
+
+def test_pac_simulation_requires_valid_execution_schedule():
+    etf = PacEtfAllocation("Azioni", "IE000XZSV718", 1)
+
+    with pytest.raises(PacSimulationValidationError, match="esecuzione"):
+        calculate_pac_simulation(
+            monthly_pac=100,
+            asset_allocations={
+                "Azioni": 1,
+                "Obbligazioni": 0,
+                "Alternativi": 0,
+            },
+            etf_allocations=[etf],
+            metadata_by_isin={"IE000XZSV718": metadata("IE000XZSV718", "ETF 1")},
+            round_up=False,
+            execution_schedule="",
+        )
 
 
 def test_pac_simulation_rejects_invalid_segment_totals():

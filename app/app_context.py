@@ -9,7 +9,9 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.db.repositories import PortfolioRepository
 from app.domain import (
     AllocationSummary,
+    DEFAULT_PAC_EXECUTION_SCHEDULE,
     EtfMetadata,
+    PacExecution,
     PacEtfAllocation,
     PacSimulationPreview,
     PerformanceReport,
@@ -19,6 +21,7 @@ from app.domain import (
     SavedPacSimulation,
 )
 from app.services.etf_metadata_service import EtfMetadataProvider, EtfMetadataService, normalize_isin
+from app.services.pac_execution_service import HistoricalPriceProvider, PacExecutionService
 from app.services.performance_service import PerformanceService
 from app.services.pac_simulation_service import calculate_pac_simulation
 from app.services.portfolio_service import calculate_allocation
@@ -112,6 +115,7 @@ class AppContext:
         asset_allocations: dict[str, float],
         etf_allocations: list[PacEtfAllocation],
         round_up: bool = False,
+        execution_schedule: str = DEFAULT_PAC_EXECUTION_SCHEDULE,
         force_refresh: bool = False,
         metadata_provider: EtfMetadataProvider | None = None,
     ) -> PacSimulationPreview:
@@ -130,6 +134,7 @@ class AppContext:
             etf_allocations=etf_allocations,
             metadata_by_isin=metadata_by_isin,
             round_up=round_up,
+            execution_schedule=execution_schedule,
         )
 
     def save_simulation_preview(
@@ -155,6 +160,62 @@ class AppContext:
     def delete_saved_simulation(self, simulation_id: int) -> None:
         with self._session() as session:
             PortfolioRepository(session).delete_simulation(simulation_id)
+            session.commit()
+
+    def pac_executions(self) -> list[PacExecution]:
+        with self._repo() as repo:
+            return repo.list_pac_executions()
+
+    def ensure_due_pac_executions(
+        self,
+        today: date | None = None,
+        price_provider: HistoricalPriceProvider | None = None,
+    ) -> list[PacExecution]:
+        with self._session() as session:
+            repo = PortfolioRepository(session)
+            executions = PacExecutionService(price_provider).ensure_due_executions(
+                repo,
+                today or date.today(),
+            )
+            session.commit()
+            return executions
+
+    def create_manual_pac_execution(
+        self,
+        simulation_id: int,
+        execution_date: date,
+        name: str | None = None,
+        price_provider: HistoricalPriceProvider | None = None,
+    ) -> PacExecution:
+        with self._session() as session:
+            repo = PortfolioRepository(session)
+            execution = PacExecutionService(price_provider).create_manual_execution(
+                repo,
+                simulation_id=simulation_id,
+                execution_date=execution_date,
+                name=name,
+            )
+            session.commit()
+            return execution
+
+    def update_pac_execution_name(self, execution_id: int, name: str) -> PacExecution:
+        with self._session() as session:
+            execution = PortfolioRepository(session).update_pac_execution_name(execution_id, name)
+            session.commit()
+            return execution
+
+    def update_pac_execution_row_amount(self, row_id: int, invested_amount: float) -> PacExecution:
+        with self._session() as session:
+            execution = PortfolioRepository(session).update_pac_execution_row_amount(
+                row_id,
+                invested_amount,
+            )
+            session.commit()
+            return execution
+
+    def delete_pac_execution(self, execution_id: int) -> None:
+        with self._session() as session:
+            PortfolioRepository(session).delete_pac_execution(execution_id)
             session.commit()
 
     def save_pac_simulation(

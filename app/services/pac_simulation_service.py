@@ -5,7 +5,9 @@ from math import ceil, isclose
 import re
 
 from app.domain import (
+    DEFAULT_PAC_EXECUTION_SCHEDULE,
     EtfMetadata,
+    PAC_EXECUTION_SCHEDULE_OPTIONS,
     PacEtfAllocation,
     PacSimulationPreview,
     PacSimulationRow,
@@ -24,8 +26,10 @@ def calculate_pac_simulation(
     etf_allocations: list[PacEtfAllocation],
     metadata_by_isin: dict[str, EtfMetadata],
     round_up: bool = False,
+    execution_schedule: str = DEFAULT_PAC_EXECUTION_SCHEDULE,
 ) -> PacSimulationPreview:
     _validate_monthly_pac(monthly_pac)
+    selected_schedule = _validate_execution_schedule(execution_schedule)
     normalized_assets = {asset_class: float(value) for asset_class, value in asset_allocations.items()}
     normalized_etfs = [
         PacEtfAllocation(item.asset_class, item.isin.strip().upper(), float(item.segment_pct))
@@ -58,12 +62,20 @@ def calculate_pac_simulation(
         round_up=round_up,
         real_monthly_pac=round(real_monthly_pac, 2),
         rows=rows,
+        execution_schedule=selected_schedule,
     )
 
 
 def _validate_monthly_pac(monthly_pac: float) -> None:
     if monthly_pac <= 0:
         raise PacSimulationValidationError("Il PAC mensile deve essere maggiore di zero.")
+
+
+def _validate_execution_schedule(execution_schedule: str) -> str:
+    selected = execution_schedule.strip() if execution_schedule else ""
+    if selected not in PAC_EXECUTION_SCHEDULE_OPTIONS:
+        raise PacSimulationValidationError("La configurazione di esecuzione del PAC e obbligatoria.")
+    return selected
 
 
 def _validate_assets(asset_allocations: dict[str, float]) -> None:

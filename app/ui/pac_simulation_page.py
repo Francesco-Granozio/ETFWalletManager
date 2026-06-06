@@ -8,7 +8,13 @@ from tkinter import messagebox, ttk
 import customtkinter as ctk
 
 from app.app_context import AppContext
-from app.domain import PacEtfAllocation, PacSimulationPreview, SavedPacSimulation
+from app.domain import (
+    DEFAULT_PAC_EXECUTION_SCHEDULE,
+    PAC_EXECUTION_SCHEDULE_OPTIONS,
+    PacEtfAllocation,
+    PacSimulationPreview,
+    SavedPacSimulation,
+)
 from app.services.pac_simulation_service import PacSimulationValidationError
 from app.ui.widgets import DataTable, asset_class_tag, configure_treeview_tags, configure_treeview_theme
 from app.utils.formatting import money, parse_decimal, pct
@@ -21,7 +27,7 @@ class SimulationTreeItem:
     item_id: str
     parent_id: str
     text: str
-    values: tuple[str, str, str, str]
+    values: tuple[str, str, str, str, str]
     tag: str
     open: bool = False
 
@@ -58,9 +64,15 @@ class PacSimulationPage(ctk.CTkFrame):
         )
         self.pac_entry = _entry(controls, "Importo", 1)
         self.name_entry = _entry(controls, "Nome simulazione", 2)
+        self.execution_schedule = _combo(
+            controls,
+            "Esecuzione",
+            list(PAC_EXECUTION_SCHEDULE_OPTIONS),
+            3,
+        )
 
         ctk.CTkLabel(controls, text="Asset class", font=ctk.CTkFont(size=16, weight="bold")).grid(
-            row=3,
+            row=4,
             column=0,
             columnspan=2,
             sticky="w",
@@ -68,14 +80,14 @@ class PacSimulationPage(ctk.CTkFrame):
             pady=(18, 8),
         )
         self.asset_entries: dict[str, ctk.CTkEntry] = {}
-        for offset, asset_class in enumerate(ASSET_CLASSES, start=4):
+        for offset, asset_class in enumerate(ASSET_CLASSES, start=5):
             self.asset_entries[asset_class] = _entry(controls, f"{asset_class} %", offset)
 
         self.round_up = ctk.CTkSwitch(controls, text="Arrotonda importi per eccesso")
-        self.round_up.grid(row=7, column=0, columnspan=2, sticky="w", padx=14, pady=(12, 8))
+        self.round_up.grid(row=8, column=0, columnspan=2, sticky="w", padx=14, pady=(12, 8))
 
         ctk.CTkLabel(controls, text="ETF", font=ctk.CTkFont(size=16, weight="bold")).grid(
-            row=8,
+            row=9,
             column=0,
             columnspan=2,
             sticky="w",
@@ -83,7 +95,7 @@ class PacSimulationPage(ctk.CTkFrame):
             pady=(18, 8),
         )
         self.tabs = ctk.CTkTabview(controls)
-        self.tabs.grid(row=9, column=0, columnspan=2, sticky="nsew", padx=14, pady=(0, 12))
+        self.tabs.grid(row=10, column=0, columnspan=2, sticky="nsew", padx=14, pady=(0, 12))
         for asset_class in ASSET_CLASSES:
             tab = self.tabs.add(asset_class)
             tab.grid_columnconfigure(0, weight=1)
@@ -99,7 +111,7 @@ class PacSimulationPage(ctk.CTkFrame):
             self.add_etf_row(asset_class)
 
         ctk.CTkButton(controls, text="Nuova simulazione", command=self.new_simulation).grid(
-            row=10,
+            row=11,
             column=0,
             columnspan=2,
             sticky="ew",
@@ -107,14 +119,6 @@ class PacSimulationPage(ctk.CTkFrame):
             pady=(8, 6),
         )
         ctk.CTkButton(controls, text="Calcola preview", command=self.calculate_preview).grid(
-            row=11,
-            column=0,
-            columnspan=2,
-            sticky="ew",
-            padx=14,
-            pady=6,
-        )
-        ctk.CTkButton(controls, text="Aggiorna dati justETF", command=self.refresh_metadata).grid(
             row=12,
             column=0,
             columnspan=2,
@@ -122,7 +126,7 @@ class PacSimulationPage(ctk.CTkFrame):
             padx=14,
             pady=6,
         )
-        ctk.CTkButton(controls, text="Salva simulazione", command=self.save_simulation).grid(
+        ctk.CTkButton(controls, text="Aggiorna dati justETF", command=self.refresh_metadata).grid(
             row=13,
             column=0,
             columnspan=2,
@@ -130,8 +134,16 @@ class PacSimulationPage(ctk.CTkFrame):
             padx=14,
             pady=6,
         )
-        ctk.CTkButton(controls, text="Applica preview al PAC", command=self.create_pac).grid(
+        ctk.CTkButton(controls, text="Salva simulazione", command=self.save_simulation).grid(
             row=14,
+            column=0,
+            columnspan=2,
+            sticky="ew",
+            padx=14,
+            pady=6,
+        )
+        ctk.CTkButton(controls, text="Applica preview al PAC", command=self.create_pac).grid(
+            row=15,
             column=0,
             columnspan=2,
             sticky="ew",
@@ -183,7 +195,7 @@ class PacSimulationPage(ctk.CTkFrame):
         saved_frame.grid_columnconfigure(0, weight=1)
         self.saved_tree = ttk.Treeview(
             saved_frame,
-            columns=("pac", "real", "rows", "applied"),
+            columns=("pac", "real", "execution", "rows", "applied"),
             show="tree headings",
             height=8,
             selectmode="browse",
@@ -192,11 +204,13 @@ class PacSimulationPage(ctk.CTkFrame):
         self.saved_tree.heading("#0", text="Simulazione / ETF")
         self.saved_tree.heading("pac", text="PAC")
         self.saved_tree.heading("real", text="Reale")
+        self.saved_tree.heading("execution", text="Esecuzione")
         self.saved_tree.heading("rows", text="ETF")
         self.saved_tree.heading("applied", text="Applicata")
         self.saved_tree.column("#0", width=330, minwidth=180)
         self.saved_tree.column("pac", width=100, minwidth=80)
         self.saved_tree.column("real", width=100, minwidth=80)
+        self.saved_tree.column("execution", width=170, minwidth=140)
         self.saved_tree.column("rows", width=60, minwidth=50)
         self.saved_tree.column("applied", width=120, minwidth=90)
         saved_scroll = ttk.Scrollbar(saved_frame, orient="vertical", command=self.saved_tree.yview)
@@ -279,6 +293,7 @@ class PacSimulationPage(ctk.CTkFrame):
         self.preview = None
         _replace(self.pac_entry, "")
         _replace(self.name_entry, "")
+        self.execution_schedule.set(DEFAULT_PAC_EXECUTION_SCHEDULE)
         for entry in self.asset_entries.values():
             _replace(entry, "")
         self._clear_etf_rows()
@@ -367,6 +382,7 @@ class PacSimulationPage(ctk.CTkFrame):
                 values=(
                     money(simulation.monthly_pac),
                     money(simulation.real_monthly_pac),
+                    simulation.execution_schedule,
                     str(len(simulation.rows)),
                     _datetime_text(simulation.applied_at),
                 ),
@@ -392,6 +408,7 @@ class PacSimulationPage(ctk.CTkFrame):
                 asset_allocations=asset_allocations,
                 etf_allocations=etf_allocations,
                 round_up=bool(self.round_up.get()),
+                execution_schedule=self.execution_schedule.get(),
                 force_refresh=force_refresh,
             )
         except PacSimulationValidationError as exc:
@@ -435,7 +452,12 @@ class PacSimulationPage(ctk.CTkFrame):
             if preview.round_up
             else ""
         )
-        self.summary_label.configure(text=f"PAC nominale: {money(preview.monthly_pac)}{effective_label}")
+        self.summary_label.configure(
+            text=(
+                f"PAC nominale: {money(preview.monthly_pac)}{effective_label} | "
+                f"Esecuzione: {preview.execution_schedule}"
+            )
+        )
 
         rows = []
         by_asset: dict[str, list] = defaultdict(list)
@@ -480,6 +502,21 @@ class PacSimulationPage(ctk.CTkFrame):
                         "etf_row",
                     )
                 )
+            rows.append(
+                (
+                    f"subtotal-{asset_class}",
+                    [
+                        f"Subtotale {asset_class}",
+                        pct(asset_pct),
+                        "",
+                        money(nominal),
+                        money(effective),
+                        "",
+                        "",
+                    ],
+                    "subtotal_row",
+                )
+            )
 
         rows.append(
             (
@@ -509,6 +546,7 @@ class PacSimulationPage(ctk.CTkFrame):
     def _populate_form(self, simulation: SavedPacSimulation) -> None:
         _replace(self.name_entry, simulation.name)
         _replace(self.pac_entry, str(simulation.monthly_pac))
+        self.execution_schedule.set(simulation.execution_schedule)
         for asset_class in ASSET_CLASSES:
             asset_row = next((row for row in simulation.rows if row.asset_class == asset_class), None)
             _replace(self.asset_entries[asset_class], str((asset_row.asset_class_pct * 100) if asset_row else 0))
@@ -554,6 +592,14 @@ def _entry(master, label: str, row: int) -> ctk.CTkEntry:
     return entry
 
 
+def _combo(master, label: str, values: list[str], row: int) -> ctk.CTkComboBox:
+    ctk.CTkLabel(master, text=label).grid(row=row, column=0, sticky="w", padx=14, pady=6)
+    combo = ctk.CTkComboBox(master, values=values, state="readonly")
+    combo.grid(row=row, column=1, sticky="ew", padx=(6, 14), pady=6)
+    combo.set(DEFAULT_PAC_EXECUTION_SCHEDULE)
+    return combo
+
+
 def _replace(entry: ctk.CTkEntry, value: str) -> None:
     entry.delete(0, "end")
     entry.insert(0, value.replace(".", ","))
@@ -585,6 +631,7 @@ def simulation_tree_items(simulation: SavedPacSimulation) -> list[SimulationTree
                 values=(
                     pct(asset_rows[0].asset_class_pct),
                     money(effective),
+                    "",
                     str(len(asset_rows)),
                     "",
                 ),
@@ -601,12 +648,28 @@ def simulation_tree_items(simulation: SavedPacSimulation) -> list[SimulationTree
                     values=(
                         pct(row.target_pct),
                         money(row.effective_amount),
+                        "",
                         row.metadata.isin,
                         "",
                     ),
                     tag="etf_row",
                 )
             )
+        items.append(
+            SimulationTreeItem(
+                item_id=f"{asset_id}-subtotal",
+                parent_id=asset_id,
+                text=f"Subtotale {asset_class}",
+                values=(
+                    pct(asset_rows[0].asset_class_pct),
+                    money(effective),
+                    "",
+                    str(len(asset_rows)),
+                    "",
+                ),
+                tag="subtotal_row",
+            )
+        )
     return items
 
 
@@ -616,6 +679,7 @@ def _preview_from_saved(simulation: SavedPacSimulation) -> PacSimulationPreview:
         round_up=simulation.round_up,
         real_monthly_pac=simulation.real_monthly_pac,
         rows=simulation.rows,
+        execution_schedule=simulation.execution_schedule,
     )
 
 

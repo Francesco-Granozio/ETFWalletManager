@@ -1,8 +1,10 @@
 from datetime import date
 
+from sqlalchemy import text
+
 from app.db.database import create_session_factory, init_database
 from app.db.repositories import PortfolioRepository
-from app.domain import EtfMetadata, PacSimulationPreview, PacSimulationRow
+from app.domain import DEFAULT_PAC_EXECUTION_SCHEDULE, EtfMetadata, PacSimulationPreview, PacSimulationRow
 
 
 def metadata(isin: str = "IE000XZSV718") -> EtfMetadata:
@@ -32,6 +34,7 @@ def test_database_initializes_empty_portfolio_and_default_settings(tmp_path):
         assert repo.get_monthly_pac() == 0
         assert repo.settings_dict()["theme"] == "dark"
         assert repo.settings_dict()["auto_snapshot_enabled"] == "true"
+        assert repo.settings_dict()["pac_execution_schedule"] == DEFAULT_PAC_EXECUTION_SCHEDULE
 
 
 def test_repository_persists_etf_metadata_cache(tmp_path):
@@ -83,6 +86,7 @@ def test_repository_replaces_portfolio_from_manual_pac_preview(tmp_path):
         positions = repo.list_positions()
 
         assert repo.get_monthly_pac() == 100
+        assert repo.settings_dict()["pac_execution_schedule"] == DEFAULT_PAC_EXECUTION_SCHEDULE
         assert len(positions) == 1
         assert positions[0].isin == "IE000XZSV718"
         assert positions[0].asset_class == "Azioni"
@@ -129,6 +133,37 @@ def test_repository_saves_and_lists_multiple_pac_simulations(tmp_path):
         assert {simulation.id for simulation in simulations} == {first.id, second.id}
         assert simulations[0].rows[0].metadata.isin == "IE000XZSV718"
         assert simulations[0].real_monthly_pac == 101
+        assert simulations[0].execution_schedule == DEFAULT_PAC_EXECUTION_SCHEDULE
+
+
+def test_database_migrates_existing_simulations_with_default_execution_schedule(tmp_path):
+    db_path = tmp_path / "portfolio.db"
+    session_factory = create_session_factory(db_path)
+    engine = session_factory.kw["bind"]
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                CREATE TABLE pac_simulations (
+                    id INTEGER PRIMARY KEY,
+                    name VARCHAR(120) NOT NULL,
+                    monthly_pac FLOAT NOT NULL,
+                    round_up BOOLEAN NOT NULL,
+                    real_monthly_pac FLOAT NOT NULL,
+                    created_at DATETIME NOT NULL,
+                    updated_at DATETIME NOT NULL,
+                    applied_at DATETIME
+                )
+                """
+            )
+        )
+
+    init_database(session_factory)
+
+    with engine.connect() as connection:
+        columns = [row[1] for row in connection.execute(text("PRAGMA table_info(pac_simulations)"))]
+
+    assert "execution_schedule" in columns
 
 
 def test_repository_deletes_saved_simulation_without_clearing_active_portfolio(tmp_path):
@@ -165,6 +200,48 @@ def test_repository_deletes_saved_simulation_without_clearing_active_portfolio(t
         assert repo.list_simulations() == []
         assert len(repo.list_positions()) == 1
         assert repo.list_positions()[0].isin == "IE000XZSV718"
+
+
+def test_repository_updates_manual_pac_execution_row_amount(tmp_path):
+    db_path = tmp_path / "portfolio.db"
+    session_factory = create_session_factory(db_path)
+    init_database(session_factory)
+    preview = PacSimulationPreview(
+        monthly_pac=100,
+        round_up=False,
+        real_monthly_pac=100,
+        rows=[
+            PacSimulationRow(
+                asset_class="Azioni",
+                asset_class_pct=1,
+                segment_pct=1,
+                target_pct=1,
+                nominal_amount=100,
+                effective_amount=100,
+                metadata=metadata(),
+            )
+        ],
+    )
+
+    with session_factory() as session:
+        repo = PortfolioRepository(session)
+        simulation = repo.save_simulation_preview(preview, name="PAC manuale")
+        execution = repo.save_pac_execution_from_simulation(
+            simulation,
+            execution_date=date(2026, 2, 2),
+            name="Febbraio",
+            manual=True,
+        )
+        updated = repo.update_pac_execution_row_amount(execution.rows[0].id, 5000)
+        session.commit()
+
+    assert updated.rows[0].invested_amount == 5000
+    assert updated.manual is True
+
+    with session_factory() as session:
+        executions = PortfolioRepository(session).list_pac_executions()
+
+    assert executions[0].rows[0].invested_amount == 5000
 
 
 def test_init_database_imports_existing_active_portfolio_as_saved_simulation(tmp_path):
