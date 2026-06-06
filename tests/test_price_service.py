@@ -1,7 +1,7 @@
 from datetime import date
 
 from app.domain import PortfolioPosition, PriceQuote
-from app.services.price_service import PriceService
+from app.services.price_service import PriceService, _quote_price
 
 
 def position(isin: str) -> PortfolioPosition:
@@ -76,3 +76,14 @@ def test_price_service_reports_error_without_overwriting_cached_price():
     assert results[0].price == 10
     assert "timeout" in results[0].message
     assert repo.saved == []
+
+
+def test_quote_price_prefers_bid_over_stale_last_price():
+    quote = {
+        "last": 16.12,
+        "mid": 15.77,
+        "ask": 15.82,
+        "bid": 15.71,
+    }
+
+    assert _quote_price(quote) == 15.71

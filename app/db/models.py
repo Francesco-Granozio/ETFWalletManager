@@ -185,6 +185,8 @@ class PacExecutionRowModel(Base):
     isin: Mapped[str] = mapped_column(String(12), nullable=False, index=True)
     invested_amount: Mapped[float] = mapped_column(Float, nullable=False)
     currency: Mapped[str] = mapped_column(String(8), default="EUR", nullable=False)
+    share_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    shares: Mapped[float | None] = mapped_column(Float, nullable=True)
     current_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     current_price_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     current_price_source: Mapped[str] = mapped_column(String(80), default="", nullable=False)

@@ -71,7 +71,7 @@ def _failure(position: PortfolioPosition, exc: Exception) -> PriceUpdateResult:
 
 
 def _quote_price(quote: object) -> float | None:
-    for field in ("last", "mid", "ask", "bid"):
+    for field in ("bid", "mid", "ask", "last"):
         value = _quote_field(quote, field)
         if value is not None:
             return float(value)

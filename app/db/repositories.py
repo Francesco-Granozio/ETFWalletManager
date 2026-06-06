@@ -408,6 +408,8 @@ class PortfolioRepository:
                     isin=row.metadata.isin,
                     invested_amount=float(row.effective_amount),
                     currency=row.metadata.currency,
+                    share_price=None,
+                    shares=None,
                     current_price=current_price,
                     current_price_date=quote.price_date if quote else None,
                     current_price_source=quote.source if quote else "",
@@ -433,6 +435,23 @@ class PortfolioRepository:
         if not row:
             raise ValueError(f"PAC execution row not found: {row_id}")
         row.invested_amount = float(invested_amount)
+        row.execution.manual = True
+        self.session.flush()
+        return self._to_pac_execution(row.execution)
+
+    def update_pac_execution_row_details(
+        self,
+        row_id: int,
+        invested_amount: float,
+        share_price: float | None,
+        shares: float | None,
+    ) -> PacExecution:
+        row = self.session.get(PacExecutionRowModel, row_id)
+        if not row:
+            raise ValueError(f"PAC execution row not found: {row_id}")
+        row.invested_amount = float(invested_amount)
+        row.share_price = float(share_price) if share_price is not None else None
+        row.shares = float(shares) if shares is not None else None
         row.execution.manual = True
         self.session.flush()
         return self._to_pac_execution(row.execution)
@@ -650,6 +669,8 @@ def _to_pac_execution_row(model: PacExecutionRowModel) -> PacExecutionRow:
         isin=model.isin,
         invested_amount=model.invested_amount,
         currency=model.currency,
+        share_price=model.share_price,
+        shares=model.shares,
         current_price=model.current_price,
         current_price_date=model.current_price_date,
         current_price_source=model.current_price_source,

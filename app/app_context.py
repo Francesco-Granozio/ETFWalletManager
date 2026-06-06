@@ -214,6 +214,23 @@ class AppContext:
             session.commit()
             return execution
 
+    def update_pac_execution_row_details(
+        self,
+        row_id: int,
+        invested_amount: float,
+        share_price: float | None,
+        shares: float | None,
+    ) -> PacExecution:
+        with self._session() as session:
+            execution = PortfolioRepository(session).update_pac_execution_row_details(
+                row_id,
+                invested_amount,
+                share_price,
+                shares,
+            )
+            session.commit()
+            return execution
+
     def delete_pac_execution(self, execution_id: int) -> None:
         with self._session() as session:
             PortfolioRepository(session).delete_pac_execution(execution_id)

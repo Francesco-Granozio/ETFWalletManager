@@ -1,5 +1,7 @@
 from datetime import UTC, datetime
 
+import pytest
+
 from app.domain import EtfMetadata, PacExecution, PacExecutionRow, PacSimulationRow, PriceQuote, SavedPacSimulation
 from app.ui.dashboard import build_dashboard_summary, dashboard_table_rows
 from app.ui.pac_executions_page import (
@@ -172,6 +174,8 @@ def test_execution_tree_items_group_etfs_with_asset_headers_and_total():
                 isin="IE000XZSV718",
                 invested_amount=23,
                 currency="EUR",
+                share_price=15.2445,
+                shares=1.50874,
             ),
             PacExecutionRow(
                 id=11,
@@ -181,6 +185,8 @@ def test_execution_tree_items_group_etfs_with_asset_headers_and_total():
                 isin="LU1650491282",
                 invested_amount=8,
                 currency="EUR",
+                share_price=170,
+                shares=0.047059,
             ),
         ],
     )
@@ -199,6 +205,53 @@ def test_execution_tree_items_group_etfs_with_asset_headers_and_total():
     assert items[4].text == "TOTALE"
     assert items[4].tag == "asset_totale"
     assert all("subtotal" not in item.item_id for item in items)
+
+
+def test_execution_tree_items_marks_rows_missing_share_details_with_warning():
+    execution = PacExecution(
+        id=1,
+        simulation_id=1,
+        simulation_name="PAC attivo",
+        execution_schedule="Mensile dal 2 del mese",
+        name="Giugno",
+        execution_date=datetime(2026, 6, 2, tzinfo=UTC).date(),
+        manual=False,
+        created_at=datetime(2026, 6, 6, tzinfo=UTC),
+        updated_at=datetime(2026, 6, 6, tzinfo=UTC),
+        rows=[
+            PacExecutionRow(
+                id=10,
+                asset_class="Azioni",
+                segment="S&P 500",
+                name="ETF Azionario",
+                isin="IE000XZSV718",
+                invested_amount=23,
+                currency="EUR",
+            ),
+            PacExecutionRow(
+                id=11,
+                asset_class="Azioni",
+                segment="MSCI World",
+                name="ETF Completo",
+                isin="IE000R4ZNTN3",
+                invested_amount=12,
+                currency="EUR",
+                share_price=15.2445,
+                shares=1.50874,
+            ),
+        ],
+    )
+
+    items = execution_tree_items(execution)
+    missing = next(item for item in items if item.item_id == "execrow-10")
+    complete = next(item for item in items if item.item_id == "execrow-11")
+
+    assert missing.text.startswith("⚠ ")
+    assert missing.tag == "warning_row"
+    assert complete.text == "MSCI World"
+    assert complete.tag == "etf_row"
+    assert complete.values[3] == "15,2445"
+    assert complete.values[4] == "1,508740"
 
 
 def test_dashboard_summary_aggregates_invested_capital_by_asset_class_and_etf():
@@ -344,6 +397,49 @@ def test_dashboard_summary_uses_live_justetf_quotes_to_calculate_results():
     assert values_by_id["etf-Azioni-IE000XZSV718"][6] == "+31,25%"
     assert values_by_id["asset-Azioni"][4] == "210,00 EUR"
     assert values_by_id["total"][4] == "210,00 EUR"
+
+
+def test_dashboard_summary_prefers_manual_shares_over_estimated_units():
+    execution = PacExecution(
+        id=1,
+        simulation_id=1,
+        simulation_name="PAC attivo",
+        execution_schedule="Mensile dal 2 del mese",
+        name="Giugno",
+        execution_date=datetime(2026, 6, 2, tzinfo=UTC).date(),
+        manual=False,
+        created_at=datetime(2026, 6, 2, tzinfo=UTC),
+        updated_at=datetime(2026, 6, 2, tzinfo=UTC),
+        rows=[
+            PacExecutionRow(
+                id=10,
+                asset_class="Azioni",
+                segment="S&P 500",
+                name="ETF Azionario",
+                isin="IE000XZSV718",
+                invested_amount=23,
+                currency="EUR",
+                current_price=10,
+                share_price=15.2445,
+                shares=1.50874,
+            ),
+        ],
+    )
+
+    summary = build_dashboard_summary(
+        [execution],
+        live_quotes={
+            "IE000XZSV718": PriceQuote(
+                isin="IE000XZSV718",
+                price=20,
+                price_date=datetime(2026, 6, 6, tzinfo=UTC).date(),
+                source="justETF Gettex",
+            )
+        },
+    )
+
+    assert summary.current_value == pytest.approx(30.1748)
+    assert summary.result_value == pytest.approx(7.1748)
 
 
 def test_execution_diff_values_show_direction_indicators():

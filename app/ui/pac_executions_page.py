@@ -17,7 +17,7 @@ from app.ui.widgets import (
     treeview_palette,
     treeview_tag_colors,
 )
-from app.utils.formatting import date_text, money, parse_decimal, pct
+from app.utils.formatting import date_text, money, number, parse_decimal, pct
 
 TREND_UP_COLOR = "#22C55E"
 TREND_DOWN_COLOR = "#EF4444"
@@ -34,7 +34,7 @@ class ExecutionTreeItem:
     item_id: str
     parent_id: str
     text: str
-    values: tuple[str, str, str, str, str, str]
+    values: tuple[str, ...]
     tag: str
     open: bool = False
     trends: tuple[tuple[str, TrendArrow], ...] = ()
@@ -73,7 +73,7 @@ class PacExecutionsPage(ctk.CTkFrame):
         table_frame.grid_columnconfigure(0, weight=1)
         self.tree = ttk.Treeview(
             table_frame,
-            columns=("date", "pac", "amount", "price", "diff", "diff_pct"),
+            columns=("date", "pac", "amount", "share_price", "shares", "price", "diff", "diff_pct"),
             show="tree headings",
             selectmode="browse",
         )
@@ -82,6 +82,8 @@ class PacExecutionsPage(ctk.CTkFrame):
         self.tree.heading("date", text="Data")
         self.tree.heading("pac", text="PAC / ISIN")
         self.tree.heading("amount", text="Investito")
+        self.tree.heading("share_price", text="Share price")
+        self.tree.heading("shares", text="Shares")
         self.tree.heading("price", text="Prezzo ref.")
         self.tree.heading("diff", text="Diff")
         self.tree.heading("diff_pct", text="Diff %")
@@ -89,6 +91,8 @@ class PacExecutionsPage(ctk.CTkFrame):
         self.tree.column("date", width=100, minwidth=90)
         self.tree.column("pac", width=190, minwidth=130)
         self.tree.column("amount", width=110, minwidth=90)
+        self.tree.column("share_price", width=100, minwidth=90)
+        self.tree.column("shares", width=100, minwidth=90)
         self.tree.column("price", width=100, minwidth=90)
         self.tree.column("diff", width=100, minwidth=90)
         self.tree.column("diff_pct", width=80, minwidth=70)
@@ -149,8 +153,10 @@ class PacExecutionsPage(ctk.CTkFrame):
         self.selected_label = ctk.CTkLabel(editor, text="Seleziona una riga ETF", anchor="w", wraplength=280)
         self.selected_label.grid(row=7, column=0, columnspan=2, sticky="ew", padx=14, pady=(0, 8))
         self.amount_entry = _entry(editor, "Investito", 8)
-        ctk.CTkButton(editor, text="Salva importo ETF", command=self.save_selected_amount).grid(
-            row=9,
+        self.share_price_entry = _entry(editor, "Share price", 9)
+        self.shares_entry = _entry(editor, "Shares", 10)
+        ctk.CTkButton(editor, text="Salva dettagli ETF", command=self.save_selected_amount).grid(
+            row=11,
             column=0,
             columnspan=2,
             sticky="ew",
@@ -215,10 +221,22 @@ class PacExecutionsPage(ctk.CTkFrame):
             return
         try:
             invested_amount = parse_decimal(self.amount_entry.get())
+            share_price, shares = _share_details(
+                self.share_price_entry.get(),
+                self.shares_entry.get(),
+            )
         except ValueError:
-            messagebox.showerror("Esecuzioni PAC", "Inserisci un importo valido.")
+            messagebox.showerror(
+                "Esecuzioni PAC",
+                "Inserisci importo, share price e shares validi. Share price e shares vanno compilati insieme.",
+            )
             return
-        execution = self.context.update_pac_execution_row_amount(row.id, invested_amount)
+        execution = self.context.update_pac_execution_row_details(
+            row.id,
+            invested_amount,
+            share_price,
+            shares,
+        )
         self.refresh()
         self._select_execution(execution.id)
 
@@ -244,9 +262,13 @@ class PacExecutionsPage(ctk.CTkFrame):
         if row is None:
             self.selected_label.configure(text="Seleziona una riga ETF")
             _replace(self.amount_entry, "")
+            _replace(self.share_price_entry, "")
+            _replace(self.shares_entry, "")
             return
         self.selected_label.configure(text=f"{row.name}\n{row.isin}")
         _replace(self.amount_entry, f"{row.invested_amount:.2f}")
+        _replace(self.share_price_entry, _decimal_text(row.share_price, 4))
+        _replace(self.shares_entry, _decimal_text(row.shares, 6))
 
     def _render_tree(self) -> None:
         self.tree.delete(*self.tree.get_children())
@@ -264,6 +286,8 @@ class PacExecutionsPage(ctk.CTkFrame):
                     date_text(execution.execution_date),
                     execution.simulation_name,
                     money(execution.total_invested),
+                    "",
+                    "",
                     "",
                     execution.execution_schedule,
                     "manuale" if execution.manual else "auto",
@@ -412,6 +436,28 @@ def _replace(entry: ctk.CTkEntry, value: str) -> None:
     entry.insert(0, value.replace(".", ","))
 
 
+def _decimal_text(value: float | None, digits: int) -> str:
+    if value is None:
+        return ""
+    return f"{value:.{digits}f}"
+
+
+def _optional_decimal(text: str) -> float | None:
+    if not text.strip():
+        return None
+    return parse_decimal(text)
+
+
+def _share_details(share_price_text: str, shares_text: str) -> tuple[float | None, float | None]:
+    share_price = _optional_decimal(share_price_text)
+    shares = _optional_decimal(shares_text)
+    if (share_price is None) != (shares is None):
+        raise ValueError("share details incomplete")
+    if share_price is not None and (share_price <= 0 or shares is None or shares <= 0):
+        raise ValueError("share details invalid")
+    return share_price, shares
+
+
 def _parse_date(text: str) -> date:
     cleaned = text.strip()
     for fmt in ("%d/%m/%Y", "%Y-%m-%d"):
@@ -445,7 +491,7 @@ def execution_tree_items(execution: PacExecution) -> list[ExecutionTreeItem]:
                 item_id=asset_id,
                 parent_id=f"exec-{execution.id}",
                 text=asset_class,
-                values=("", "", money(total), "", "", ""),
+                values=("", "", money(total), "", "", "", "", ""),
                 tag=asset_class_tag(asset_class),
                 open=True,
             )
@@ -455,16 +501,18 @@ def execution_tree_items(execution: PacExecution) -> list[ExecutionTreeItem]:
                 ExecutionTreeItem(
                     item_id=f"execrow-{row.id}",
                     parent_id=asset_id,
-                    text=row.segment,
+                    text=execution_row_text(row),
                     values=(
                         date_text(row.current_price_date),
                         row.isin,
                         money(row.invested_amount),
+                        number(row.share_price, 4),
+                        number(row.shares, 6),
                         money(row.current_price),
                         trend_cell_text(row.price_diff, trend_money),
                         trend_cell_text(row.price_diff_pct, trend_pct),
                     ),
-                    tag="etf_row",
+                    tag=execution_row_tag(row),
                     trends=trend_columns(row.price_diff, row.price_diff_pct),
                 )
             )
@@ -474,11 +522,21 @@ def execution_tree_items(execution: PacExecution) -> list[ExecutionTreeItem]:
                 item_id=f"exec-{execution.id}-total",
                 parent_id=f"exec-{execution.id}",
                 text="TOTALE",
-                values=("", "", money(execution.total_invested), "", "", ""),
+                values=("", "", money(execution.total_invested), "", "", "", "", ""),
                 tag=asset_class_tag("TOTALE"),
             )
         )
     return items
+
+
+def execution_row_text(row: PacExecutionRow) -> str:
+    if row.has_share_details:
+        return row.segment
+    return f"⚠ {row.segment}"
+
+
+def execution_row_tag(row: PacExecutionRow) -> str:
+    return "etf_row" if row.has_share_details else "warning_row"
 
 
 def trend_columns(price_diff: float | None, price_diff_pct: float | None) -> tuple[tuple[str, TrendArrow], ...]:

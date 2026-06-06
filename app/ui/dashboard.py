@@ -145,7 +145,7 @@ class DashboardPage(ctk.CTkFrame):
         self.update_button.grid(row=0, column=1, sticky="e")
 
         self.total = KpiBlock(self, "Capitale investito")
-        self.current = KpiBlock(self, "Valore justETF")
+        self.current = KpiBlock(self, "Valore justETF bid")
         self.result = KpiBlock(self, "Risultato")
         self.latest = KpiBlock(self, "Ultimo PAC")
         for index, block in enumerate((self.total, self.current, self.result, self.latest)):
@@ -162,7 +162,7 @@ class DashboardPage(ctk.CTkFrame):
                 ("total_pct", "% Totale", 110),
                 ("segment_pct", "% Segmento", 120),
                 ("invested", "Investito", 120),
-                ("current", "Valore justETF", 120),
+                ("current", "Valore justETF bid", 130),
                 ("result", "Risultato", 120),
                 ("result_pct", "Diff %", 90),
                 ("executions", "Esecuzioni", 90),
@@ -264,7 +264,9 @@ def build_dashboard_summary(
             etf.name = row.name or etf.name
             etf.isin = row.isin or etf.isin
             etf.invested_amount += amount
-            if row.current_price is not None and row.current_price > 0:
+            if row.has_share_details:
+                etf.units += row.shares or 0
+            elif row.current_price is not None and row.current_price > 0:
                 etf.units += amount / row.current_price
             else:
                 etf.missing_execution_price = True

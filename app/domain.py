@@ -207,12 +207,23 @@ class PacExecutionRow:
     isin: str
     invested_amount: float
     currency: str
+    share_price: float | None = None
+    shares: float | None = None
     current_price: float | None = None
     current_price_date: date | None = None
     current_price_source: str = ""
     previous_price: float | None = None
     price_diff: float | None = None
     price_diff_pct: float | None = None
+
+    @property
+    def has_share_details(self) -> bool:
+        return (
+            self.share_price is not None
+            and self.share_price > 0
+            and self.shares is not None
+            and self.shares > 0
+        )
 
 
 @dataclass(slots=True)

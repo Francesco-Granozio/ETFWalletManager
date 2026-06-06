@@ -70,6 +70,15 @@ def _migrate_database(engine) -> None:
                         "legacy_schedule": LEGACY_PAC_EXECUTION_SCHEDULE,
                     },
                 )
+        if "pac_execution_rows" in tables:
+            columns = {
+                row[1]
+                for row in connection.execute(text("PRAGMA table_info(pac_execution_rows)"))
+            }
+            if "share_price" not in columns:
+                connection.execute(text("ALTER TABLE pac_execution_rows ADD COLUMN share_price FLOAT"))
+            if "shares" not in columns:
+                connection.execute(text("ALTER TABLE pac_execution_rows ADD COLUMN shares FLOAT"))
         if "settings" in tables:
             connection.execute(
                 text(
