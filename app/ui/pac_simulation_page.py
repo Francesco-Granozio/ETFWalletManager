@@ -27,7 +27,7 @@ class SimulationTreeItem:
     item_id: str
     parent_id: str
     text: str
-    values: tuple[str, str, str, str, str]
+    values: tuple[str, str, str, str, str, str]
     tag: str
     open: bool = False
 
@@ -195,7 +195,7 @@ class PacSimulationPage(ctk.CTkFrame):
         saved_frame.grid_columnconfigure(0, weight=1)
         self.saved_tree = ttk.Treeview(
             saved_frame,
-            columns=("pac", "real", "execution", "rows", "applied"),
+            columns=("pac", "real", "ter", "execution", "rows", "applied"),
             show="tree headings",
             height=8,
             selectmode="browse",
@@ -204,12 +204,14 @@ class PacSimulationPage(ctk.CTkFrame):
         self.saved_tree.heading("#0", text="Simulazione / ETF")
         self.saved_tree.heading("pac", text="PAC")
         self.saved_tree.heading("real", text="Reale")
+        self.saved_tree.heading("ter", text="TER")
         self.saved_tree.heading("execution", text="Esecuzione")
         self.saved_tree.heading("rows", text="ETF")
         self.saved_tree.heading("applied", text="Applicata")
         self.saved_tree.column("#0", width=330, minwidth=180)
         self.saved_tree.column("pac", width=100, minwidth=80)
         self.saved_tree.column("real", width=100, minwidth=80)
+        self.saved_tree.column("ter", width=80, minwidth=70)
         self.saved_tree.column("execution", width=170, minwidth=140)
         self.saved_tree.column("rows", width=60, minwidth=50)
         self.saved_tree.column("applied", width=120, minwidth=90)
@@ -233,6 +235,7 @@ class PacSimulationPage(ctk.CTkFrame):
                 ("segment_pct", "% Allocazione Segmento", 150),
                 ("nominal", "Importo PAC", 110),
                 ("effective", "Importo Reale", 110),
+                ("ter", "TER", 80),
                 ("name", "Strumento", 320),
                 ("isin", "ISIN", 130),
             ],
@@ -382,6 +385,7 @@ class PacSimulationPage(ctk.CTkFrame):
                 values=(
                     money(simulation.monthly_pac),
                     money(simulation.real_monthly_pac),
+                    pct(_weighted_ter(simulation.rows)),
                     simulation.execution_schedule,
                     str(len(simulation.rows)),
                     _datetime_text(simulation.applied_at),
@@ -459,81 +463,7 @@ class PacSimulationPage(ctk.CTkFrame):
             )
         )
 
-        rows = []
-        by_asset: dict[str, list] = defaultdict(list)
-        for row in preview.rows:
-            by_asset[row.asset_class].append(row)
-
-        for asset_class in ASSET_CLASSES:
-            asset_rows = by_asset.get(asset_class, [])
-            if not asset_rows:
-                continue
-            asset_pct = asset_rows[0].asset_class_pct
-            nominal = sum(row.nominal_amount for row in asset_rows)
-            effective = sum(row.effective_amount for row in asset_rows)
-            rows.append(
-                (
-                    f"asset-{asset_class}",
-                    [
-                        asset_class,
-                        pct(asset_pct),
-                        pct(1),
-                        money(nominal),
-                        money(effective),
-                        "",
-                        "",
-                    ],
-                    asset_class_tag(asset_class),
-                )
-            )
-            for item in asset_rows:
-                rows.append(
-                    (
-                        f"etf-{item.metadata.isin}",
-                        [
-                            item.metadata.segment,
-                            pct(item.target_pct),
-                            pct(item.segment_pct),
-                            money(item.nominal_amount),
-                            money(item.effective_amount),
-                            item.metadata.name,
-                            item.metadata.isin,
-                        ],
-                        "etf_row",
-                    )
-                )
-            rows.append(
-                (
-                    f"subtotal-{asset_class}",
-                    [
-                        f"Subtotale {asset_class}",
-                        pct(asset_pct),
-                        "",
-                        money(nominal),
-                        money(effective),
-                        "",
-                        "",
-                    ],
-                    "subtotal_row",
-                )
-            )
-
-        rows.append(
-            (
-                "total",
-                [
-                    "TOTALE",
-                    pct(1),
-                    "",
-                    money(preview.monthly_pac),
-                    money(preview.real_monthly_pac),
-                    "",
-                    "",
-                ],
-                asset_class_tag("TOTALE"),
-            )
-        )
-        self.table.set_rows(rows)
+        self.table.set_rows(preview_table_rows(preview))
 
     def _clear_etf_rows(self) -> None:
         for asset_class in ASSET_CLASSES:
@@ -610,6 +540,92 @@ def _parse_percent(text: str) -> float:
     return value / 100
 
 
+def preview_table_rows(preview) -> list[tuple[str, list[str], str]]:
+    rows: list[tuple[str, list[str], str]] = []
+    by_asset: dict[str, list] = defaultdict(list)
+    for row in preview.rows:
+        by_asset[row.asset_class].append(row)
+
+    for asset_class in ASSET_CLASSES:
+        asset_rows = by_asset.get(asset_class, [])
+        if not asset_rows:
+            continue
+        asset_pct = asset_rows[0].asset_class_pct
+        nominal = sum(row.nominal_amount for row in asset_rows)
+        effective = sum(row.effective_amount for row in asset_rows)
+        rows.append(
+            (
+                f"asset-{asset_class}",
+                [
+                    asset_class,
+                    pct(asset_pct),
+                    pct(1),
+                    money(nominal),
+                    money(effective),
+                    "",
+                    "",
+                    "",
+                ],
+                asset_class_tag(asset_class),
+            )
+        )
+        for item in asset_rows:
+            rows.append(
+                (
+                    f"etf-{item.metadata.isin}",
+                    [
+                        item.metadata.segment,
+                        pct(item.target_pct),
+                        pct(item.segment_pct),
+                        money(item.nominal_amount),
+                        money(item.effective_amount),
+                        pct(item.metadata.ter),
+                        item.metadata.name,
+                        item.metadata.isin,
+                    ],
+                    "etf_row",
+                )
+            )
+        rows.append(
+            (
+                f"subtotal-{asset_class}",
+                [
+                    f"Subtotale {asset_class}",
+                    pct(asset_pct),
+                    "",
+                    money(nominal),
+                    money(effective),
+                    pct(_weighted_ter(asset_rows)),
+                    "",
+                    "",
+                ],
+                "subtotal_row",
+            )
+        )
+
+    rows.append(
+        (
+            "total",
+            [
+                "TOTALE",
+                pct(1),
+                "",
+                money(preview.monthly_pac),
+                money(preview.real_monthly_pac),
+                pct(_weighted_ter(preview.rows)),
+                "",
+                "",
+            ],
+            asset_class_tag("TOTALE"),
+        )
+    )
+    return rows
+
+
+def _weighted_ter(rows) -> float:
+    return sum(row.target_pct * row.metadata.ter for row in rows)
+
+
 def simulation_tree_items(simulation: SavedPacSimulation) -> list[SimulationTreeItem]:
     items: list[SimulationTreeItem] = []
     rows_by_asset: dict[str, list] = defaultdict(list)
@@ -632,6 +648,7 @@ def simulation_tree_items(simulation: SavedPacSimulation) -> list[SimulationTree
                     pct(asset_rows[0].asset_class_pct),
                     money(effective),
                     "",
+                    "",
                     str(len(asset_rows)),
                     "",
                 ),
@@ -648,6 +665,7 @@ def simulation_tree_items(simulation: SavedPacSimulation) -> list[SimulationTree
                     values=(
                         pct(row.target_pct),
                         money(row.effective_amount),
+                        pct(row.metadata.ter),
                         "",
                         row.metadata.isin,
                         "",
@@ -663,6 +681,7 @@ def simulation_tree_items(simulation: SavedPacSimulation) -> list[SimulationTree
                 values=(
                     pct(asset_rows[0].asset_class_pct),
                     money(effective),
+                    pct(_weighted_ter(asset_rows)),
                     "",
                     str(len(asset_rows)),
                     "",

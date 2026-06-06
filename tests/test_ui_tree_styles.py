@@ -9,7 +9,7 @@ from app.ui.pac_executions_page import (
     trend_money,
     trend_pct,
 )
-from app.ui.pac_simulation_page import simulation_tree_items
+from app.ui.pac_simulation_page import preview_table_rows, simulation_tree_items
 from app.ui.widgets import asset_class_tag, treeview_palette, treeview_tag_colors
 
 
@@ -78,9 +78,76 @@ def test_simulation_tree_items_group_etfs_by_asset_class():
     assert items[0].tag == "asset_azioni"
     assert items[1].parent_id == "sim-1-asset-Azioni"
     assert items[1].text == "S&P 500"
+    assert items[1].values[2] == "0,10%"
     assert items[2].parent_id == "sim-1-asset-Azioni"
     assert items[2].text == "Subtotale Azioni"
+    assert items[2].values[2] == "0,10%"
     assert items[2].tag == "subtotal_row"
+
+
+def test_preview_table_rows_include_weighted_ter_subtotals_and_total():
+    first = EtfMetadata(
+        isin="IE000XZSV718",
+        name="ETF Azionario",
+        segment="S&P 500",
+        ticker=None,
+        exchange="GETTEX",
+        currency="EUR",
+        ter=0.002,
+        price=10,
+        price_date=None,
+        price_source="justETF",
+    )
+    second = EtfMetadata(
+        isin="IE00BDBRDM35",
+        name="ETF Bond",
+        segment="Global Aggregate",
+        ticker=None,
+        exchange="GETTEX",
+        currency="EUR",
+        ter=0.001,
+        price=10,
+        price_date=None,
+        price_source="justETF",
+    )
+    simulation = SavedPacSimulation(
+        id=1,
+        name="PAC attivo",
+        monthly_pac=100,
+        round_up=False,
+        real_monthly_pac=100,
+        created_at=datetime(2026, 6, 6, tzinfo=UTC),
+        updated_at=datetime(2026, 6, 6, tzinfo=UTC),
+        applied_at=None,
+        rows=[
+            PacSimulationRow(
+                asset_class="Azioni",
+                asset_class_pct=0.6,
+                segment_pct=1,
+                target_pct=0.6,
+                nominal_amount=60,
+                effective_amount=60,
+                metadata=first,
+            ),
+            PacSimulationRow(
+                asset_class="Obbligazioni",
+                asset_class_pct=0.4,
+                segment_pct=1,
+                target_pct=0.4,
+                nominal_amount=40,
+                effective_amount=40,
+                metadata=second,
+            ),
+        ],
+    )
+
+    rows = preview_table_rows(simulation)
+    values_by_id = {item_id: values for item_id, values, _ in rows}
+
+    assert values_by_id["etf-IE000XZSV718"][5] == "0,20%"
+    assert values_by_id["subtotal-Azioni"][5] == "0,12%"
+    assert values_by_id["subtotal-Obbligazioni"][5] == "0,04%"
+    assert values_by_id["total"][5] == "0,16%"
 
 
 def test_execution_tree_items_group_etfs_with_subtotals_and_total():
