@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import datetime
 from tkinter import messagebox, ttk
 
@@ -9,10 +10,20 @@ import customtkinter as ctk
 from app.app_context import AppContext
 from app.domain import PacEtfAllocation, PacSimulationPreview, SavedPacSimulation
 from app.services.pac_simulation_service import PacSimulationValidationError
-from app.ui.widgets import DataTable
+from app.ui.widgets import DataTable, asset_class_tag, configure_treeview_tags, configure_treeview_theme
 from app.utils.formatting import money, parse_decimal, pct
 
 ASSET_CLASSES = ("Azioni", "Obbligazioni", "Alternativi")
+
+
+@dataclass(frozen=True, slots=True)
+class SimulationTreeItem:
+    item_id: str
+    parent_id: str
+    text: str
+    values: tuple[str, str, str, str]
+    tag: str
+    open: bool = False
 
 
 class PacSimulationPage(ctk.CTkFrame):
@@ -177,6 +188,7 @@ class PacSimulationPage(ctk.CTkFrame):
             height=8,
             selectmode="browse",
         )
+        configure_treeview_theme(self.saved_tree, "SavedPac.Treeview")
         self.saved_tree.heading("#0", text="Simulazione / ETF")
         self.saved_tree.heading("pac", text="PAC")
         self.saved_tree.heading("real", text="Reale")
@@ -342,6 +354,7 @@ class PacSimulationPage(ctk.CTkFrame):
     def refresh_saved_simulations(self) -> None:
         self.saved_simulations = self.context.saved_pac_simulations()
         self.saved_tree.delete(*self.saved_tree.get_children())
+        configure_treeview_tags(self.saved_tree)
         for simulation in self.saved_simulations:
             parent_id = f"sim-{simulation.id}"
             self.saved_tree.insert(
@@ -350,6 +363,7 @@ class PacSimulationPage(ctk.CTkFrame):
                 iid=parent_id,
                 text=simulation.name,
                 open=False,
+                tags=("simulation",),
                 values=(
                     money(simulation.monthly_pac),
                     money(simulation.real_monthly_pac),
@@ -357,18 +371,15 @@ class PacSimulationPage(ctk.CTkFrame):
                     _datetime_text(simulation.applied_at),
                 ),
             )
-            for index, row in enumerate(simulation.rows, start=1):
+            for item in simulation_tree_items(simulation):
                 self.saved_tree.insert(
-                    parent_id,
+                    item.parent_id,
                     "end",
-                    iid=f"sim-{simulation.id}-row-{index}",
-                    text=f"{row.asset_class} - {row.metadata.segment}",
-                    values=(
-                        pct(row.target_pct),
-                        money(row.effective_amount),
-                        row.metadata.isin,
-                        "",
-                    ),
+                    iid=item.item_id,
+                    text=item.text,
+                    values=item.values,
+                    tags=(item.tag,),
+                    open=item.open,
                 )
 
     def _build_preview(self, force_refresh: bool) -> PacSimulationPreview | None:
@@ -450,6 +461,7 @@ class PacSimulationPage(ctk.CTkFrame):
                         "",
                         "",
                     ],
+                    asset_class_tag(asset_class),
                 )
             )
             for item in asset_rows:
@@ -465,6 +477,7 @@ class PacSimulationPage(ctk.CTkFrame):
                             item.metadata.name,
                             item.metadata.isin,
                         ],
+                        "etf_row",
                     )
                 )
 
@@ -480,6 +493,7 @@ class PacSimulationPage(ctk.CTkFrame):
                     "",
                     "",
                 ],
+                asset_class_tag("TOTALE"),
             )
         )
         self.table.set_rows(rows)
@@ -548,6 +562,52 @@ def _replace(entry: ctk.CTkEntry, value: str) -> None:
 def _parse_percent(text: str) -> float:
     value = parse_decimal(text.replace("%", ""))
     return value / 100
+
+
+def simulation_tree_items(simulation: SavedPacSimulation) -> list[SimulationTreeItem]:
+    items: list[SimulationTreeItem] = []
+    rows_by_asset: dict[str, list] = defaultdict(list)
+    for row in simulation.rows:
+        rows_by_asset[row.asset_class].append(row)
+
+    for asset_class in ASSET_CLASSES:
+        asset_rows = rows_by_asset.get(asset_class, [])
+        if not asset_rows:
+            continue
+        asset_id = f"sim-{simulation.id}-asset-{asset_class}"
+        nominal = sum(row.nominal_amount for row in asset_rows)
+        effective = sum(row.effective_amount for row in asset_rows)
+        items.append(
+            SimulationTreeItem(
+                item_id=asset_id,
+                parent_id=f"sim-{simulation.id}",
+                text=asset_class,
+                values=(
+                    pct(asset_rows[0].asset_class_pct),
+                    money(effective),
+                    str(len(asset_rows)),
+                    "",
+                ),
+                tag=asset_class_tag(asset_class),
+                open=True,
+            )
+        )
+        for index, row in enumerate(asset_rows, start=1):
+            items.append(
+                SimulationTreeItem(
+                    item_id=f"{asset_id}-row-{index}",
+                    parent_id=asset_id,
+                    text=row.metadata.segment,
+                    values=(
+                        pct(row.target_pct),
+                        money(row.effective_amount),
+                        row.metadata.isin,
+                        "",
+                    ),
+                    tag="etf_row",
+                )
+            )
+    return items
 
 
 def _preview_from_saved(simulation: SavedPacSimulation) -> PacSimulationPreview:
