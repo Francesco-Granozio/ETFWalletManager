@@ -468,15 +468,6 @@ def execution_tree_items(execution: PacExecution) -> list[ExecutionTreeItem]:
                     trends=trend_columns(row.price_diff, row.price_diff_pct),
                 )
             )
-        items.append(
-            ExecutionTreeItem(
-                item_id=f"{asset_id}-subtotal",
-                parent_id=asset_id,
-                text=f"Subtotale {asset_class}",
-                values=("", "", money(total), "", "", ""),
-                tag="subtotal_row",
-            )
-        )
     if execution.rows:
         items.append(
             ExecutionTreeItem(

@@ -562,7 +562,7 @@ def preview_table_rows(preview) -> list[tuple[str, list[str], str]]:
                     pct(1),
                     money(nominal),
                     money(effective),
-                    "",
+                    pct(_weighted_ter(asset_rows)),
                     "",
                     "",
                 ],
@@ -586,23 +586,6 @@ def preview_table_rows(preview) -> list[tuple[str, list[str], str]]:
                     "etf_row",
                 )
             )
-        rows.append(
-            (
-                f"subtotal-{asset_class}",
-                [
-                    f"Subtotale {asset_class}",
-                    pct(asset_pct),
-                    "",
-                    money(nominal),
-                    money(effective),
-                    pct(_weighted_ter(asset_rows)),
-                    "",
-                    "",
-                ],
-                "subtotal_row",
-            )
-        )
-
     rows.append(
         (
             "total",
@@ -637,7 +620,6 @@ def simulation_tree_items(simulation: SavedPacSimulation) -> list[SimulationTree
         if not asset_rows:
             continue
         asset_id = f"sim-{simulation.id}-asset-{asset_class}"
-        nominal = sum(row.nominal_amount for row in asset_rows)
         effective = sum(row.effective_amount for row in asset_rows)
         items.append(
             SimulationTreeItem(
@@ -647,7 +629,7 @@ def simulation_tree_items(simulation: SavedPacSimulation) -> list[SimulationTree
                 values=(
                     pct(asset_rows[0].asset_class_pct),
                     money(effective),
-                    "",
+                    pct(_weighted_ter(asset_rows)),
                     "",
                     str(len(asset_rows)),
                     "",
@@ -673,22 +655,6 @@ def simulation_tree_items(simulation: SavedPacSimulation) -> list[SimulationTree
                     tag="etf_row",
                 )
             )
-        items.append(
-            SimulationTreeItem(
-                item_id=f"{asset_id}-subtotal",
-                parent_id=asset_id,
-                text=f"Subtotale {asset_class}",
-                values=(
-                    pct(asset_rows[0].asset_class_pct),
-                    money(effective),
-                    pct(_weighted_ter(asset_rows)),
-                    "",
-                    str(len(asset_rows)),
-                    "",
-                ),
-                tag="subtotal_row",
-            )
-        )
     return items
 
 

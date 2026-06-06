@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 
-from app.domain import EtfMetadata, PacExecution, PacExecutionRow, PacSimulationRow, SavedPacSimulation
+from app.domain import EtfMetadata, PacExecution, PacExecutionRow, PacSimulationRow, PriceQuote, SavedPacSimulation
+from app.ui.dashboard import build_dashboard_summary, dashboard_table_rows
 from app.ui.pac_executions_page import (
     execution_tree_items,
     trend_arrow,
@@ -33,7 +34,7 @@ def test_simulation_parent_row_uses_requested_dark_color():
     colors = treeview_tag_colors("Dark")
 
     assert colors["simulation"][0] == "#555080"
-    assert colors["subtotal_row"][0] == "#0E7490"
+    assert "subtotal_row" not in colors
 
 
 def test_simulation_tree_items_group_etfs_by_asset_class():
@@ -79,13 +80,12 @@ def test_simulation_tree_items_group_etfs_by_asset_class():
     assert items[1].parent_id == "sim-1-asset-Azioni"
     assert items[1].text == "S&P 500"
     assert items[1].values[2] == "0,10%"
-    assert items[2].parent_id == "sim-1-asset-Azioni"
-    assert items[2].text == "Subtotale Azioni"
-    assert items[2].values[2] == "0,10%"
-    assert items[2].tag == "subtotal_row"
+    assert items[0].values[2] == "0,10%"
+    assert len(items) == 2
+    assert all("subtotal" not in item.item_id for item in items)
 
 
-def test_preview_table_rows_include_weighted_ter_subtotals_and_total():
+def test_preview_table_rows_include_weighted_ter_on_asset_headers_and_total():
     first = EtfMetadata(
         isin="IE000XZSV718",
         name="ETF Azionario",
@@ -144,13 +144,15 @@ def test_preview_table_rows_include_weighted_ter_subtotals_and_total():
     rows = preview_table_rows(simulation)
     values_by_id = {item_id: values for item_id, values, _ in rows}
 
+    assert "subtotal-Azioni" not in values_by_id
+    assert "subtotal-Obbligazioni" not in values_by_id
+    assert values_by_id["asset-Azioni"][5] == "0,12%"
+    assert values_by_id["asset-Obbligazioni"][5] == "0,04%"
     assert values_by_id["etf-IE000XZSV718"][5] == "0,20%"
-    assert values_by_id["subtotal-Azioni"][5] == "0,12%"
-    assert values_by_id["subtotal-Obbligazioni"][5] == "0,04%"
     assert values_by_id["total"][5] == "0,16%"
 
 
-def test_execution_tree_items_group_etfs_with_subtotals_and_total():
+def test_execution_tree_items_group_etfs_with_asset_headers_and_total():
     execution = PacExecution(
         id=1,
         simulation_id=1,
@@ -189,19 +191,159 @@ def test_execution_tree_items_group_etfs_with_subtotals_and_total():
     assert items[0].tag == "asset_azioni"
     assert items[1].parent_id == "exec-1-asset-Azioni"
     assert items[1].tag == "etf_row"
-    assert items[2].parent_id == "exec-1-asset-Azioni"
-    assert items[2].text == "Subtotale Azioni"
-    assert items[2].tag == "subtotal_row"
-    assert items[3].item_id == "exec-1-asset-Obbligazioni"
-    assert items[3].tag == "asset_obbligazioni"
-    assert items[4].parent_id == "exec-1-asset-Obbligazioni"
-    assert items[4].tag == "etf_row"
-    assert items[5].parent_id == "exec-1-asset-Obbligazioni"
-    assert items[5].text == "Subtotale Obbligazioni"
-    assert items[5].tag == "subtotal_row"
-    assert items[6].item_id == "exec-1-total"
-    assert items[6].text == "TOTALE"
-    assert items[6].tag == "asset_totale"
+    assert items[2].item_id == "exec-1-asset-Obbligazioni"
+    assert items[2].tag == "asset_obbligazioni"
+    assert items[3].parent_id == "exec-1-asset-Obbligazioni"
+    assert items[3].tag == "etf_row"
+    assert items[4].item_id == "exec-1-total"
+    assert items[4].text == "TOTALE"
+    assert items[4].tag == "asset_totale"
+    assert all("subtotal" not in item.item_id for item in items)
+
+
+def test_dashboard_summary_aggregates_invested_capital_by_asset_class_and_etf():
+    first_execution = PacExecution(
+        id=1,
+        simulation_id=1,
+        simulation_name="PAC attivo",
+        execution_schedule="Mensile dal 2 del mese",
+        name="Maggio",
+        execution_date=datetime(2026, 5, 2, tzinfo=UTC).date(),
+        manual=False,
+        created_at=datetime(2026, 5, 2, tzinfo=UTC),
+        updated_at=datetime(2026, 5, 2, tzinfo=UTC),
+        rows=[
+            PacExecutionRow(
+                id=10,
+                asset_class="Azioni",
+                segment="S&P 500",
+                name="ETF Azionario",
+                isin="IE000XZSV718",
+                invested_amount=60,
+                currency="EUR",
+            ),
+            PacExecutionRow(
+                id=11,
+                asset_class="Obbligazioni",
+                segment="Aggregate Bond",
+                name="ETF Bond",
+                isin="IE00BDBRDM35",
+                invested_amount=40,
+                currency="EUR",
+            ),
+        ],
+    )
+    latest_execution = PacExecution(
+        id=2,
+        simulation_id=1,
+        simulation_name="PAC attivo",
+        execution_schedule="Mensile dal 2 del mese",
+        name="Giugno",
+        execution_date=datetime(2026, 6, 2, tzinfo=UTC).date(),
+        manual=False,
+        created_at=datetime(2026, 6, 2, tzinfo=UTC),
+        updated_at=datetime(2026, 6, 2, tzinfo=UTC),
+        rows=[
+            PacExecutionRow(
+                id=12,
+                asset_class="Azioni",
+                segment="S&P 500",
+                name="ETF Azionario",
+                isin="IE000XZSV718",
+                invested_amount=70,
+                currency="EUR",
+            ),
+            PacExecutionRow(
+                id=13,
+                asset_class="Alternativi",
+                segment="Gold",
+                name="ETF Oro",
+                isin="IE00B4ND3602",
+                invested_amount=30,
+                currency="EUR",
+            ),
+        ],
+    )
+
+    summary = build_dashboard_summary([first_execution, latest_execution])
+    rows = dashboard_table_rows(summary)
+    values_by_id = {item_id: values for item_id, values, _ in rows}
+    tags_by_id = {item_id: tag for item_id, _, tag in rows}
+
+    assert summary.total_invested == 200
+    assert summary.latest_execution is latest_execution
+    assert values_by_id["asset-Azioni"][3] == "130,00 EUR"
+    assert values_by_id["etf-Azioni-IE000XZSV718"][1] == "65,00%"
+    assert values_by_id["etf-Azioni-IE000XZSV718"][2] == "100,00%"
+    assert values_by_id["asset-Obbligazioni"][3] == "40,00 EUR"
+    assert values_by_id["asset-Alternativi"][3] == "30,00 EUR"
+    assert values_by_id["total"][3] == "200,00 EUR"
+    assert values_by_id["total"][7] == "2"
+    assert tags_by_id["asset-Azioni"] == "asset_azioni"
+    assert tags_by_id["total"] == "asset_totale"
+    assert "subtotal-Azioni" not in values_by_id
+
+
+def test_dashboard_summary_uses_live_justetf_quotes_to_calculate_results():
+    execution = PacExecution(
+        id=1,
+        simulation_id=1,
+        simulation_name="PAC attivo",
+        execution_schedule="Mensile dal 2 del mese",
+        name="Giugno",
+        execution_date=datetime(2026, 6, 2, tzinfo=UTC).date(),
+        manual=False,
+        created_at=datetime(2026, 6, 2, tzinfo=UTC),
+        updated_at=datetime(2026, 6, 2, tzinfo=UTC),
+        rows=[
+            PacExecutionRow(
+                id=10,
+                asset_class="Azioni",
+                segment="S&P 500",
+                name="ETF Azionario",
+                isin="IE000XZSV718",
+                invested_amount=100,
+                currency="EUR",
+                current_price=10,
+                current_price_date=datetime(2026, 6, 2, tzinfo=UTC).date(),
+                current_price_source="justETF chart",
+            ),
+            PacExecutionRow(
+                id=11,
+                asset_class="Azioni",
+                segment="S&P 500",
+                name="ETF Azionario",
+                isin="IE000XZSV718",
+                invested_amount=60,
+                currency="EUR",
+                current_price=12,
+                current_price_date=datetime(2026, 6, 2, tzinfo=UTC).date(),
+                current_price_source="justETF chart",
+            ),
+        ],
+    )
+
+    summary = build_dashboard_summary(
+        [execution],
+        live_quotes={
+            "IE000XZSV718": PriceQuote(
+                isin="IE000XZSV718",
+                price=14,
+                price_date=datetime(2026, 6, 6, tzinfo=UTC).date(),
+                source="justETF Gettex",
+            )
+        },
+    )
+    rows = dashboard_table_rows(summary)
+    values_by_id = {item_id: values for item_id, values, _ in rows}
+
+    assert summary.current_value == 210
+    assert summary.result_value == 50
+    assert values_by_id["etf-Azioni-IE000XZSV718"][4] == "210,00 EUR"
+    assert values_by_id["etf-Azioni-IE000XZSV718"][5] == "+50,00 EUR"
+    assert values_by_id["etf-Azioni-IE000XZSV718"][6] == "+31,25%"
+    assert values_by_id["asset-Azioni"][4] == "210,00 EUR"
+    assert values_by_id["total"][4] == "210,00 EUR"
 
 
 def test_execution_diff_values_show_direction_indicators():

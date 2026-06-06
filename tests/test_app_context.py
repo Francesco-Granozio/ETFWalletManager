@@ -2,7 +2,7 @@ from datetime import date
 
 from app.app_context import AppContext
 from app.db.database import create_session_factory, init_database
-from app.domain import DEFAULT_PAC_EXECUTION_SCHEDULE, EtfMetadata, PacEtfAllocation
+from app.domain import DEFAULT_PAC_EXECUTION_SCHEDULE, EtfMetadata, PacEtfAllocation, PriceQuote
 
 
 def make_context(tmp_path):
@@ -33,6 +33,18 @@ class FakeMetadataProvider:
     def fetch(self, isin: str) -> EtfMetadata:
         self.calls.append(isin)
         return metadata(isin)
+
+
+class FakePriceProvider:
+    def fetch(self, isin: str) -> PriceQuote:
+        if isin == "IE000FAIL001":
+            raise TimeoutError("timeout")
+        return PriceQuote(
+            isin=isin,
+            price=12.34,
+            price_date=date(2026, 6, 8),
+            source="fake justETF",
+        )
 
 
 def test_app_context_starts_from_empty_allocation_and_snapshot(tmp_path):
@@ -129,3 +141,16 @@ def test_app_context_deletes_selected_saved_simulation(tmp_path):
     context.delete_saved_simulation(saved.id)
 
     assert context.saved_pac_simulations() == []
+
+
+def test_app_context_fetches_live_price_quotes_for_dashboard(tmp_path):
+    context = make_context(tmp_path)
+
+    quotes, errors = context.live_price_quotes(
+        ["ie000xzsv718", "IE000FAIL001"],
+        price_provider=FakePriceProvider(),
+    )
+
+    assert quotes["IE000XZSV718"].price == 12.34
+    assert quotes["IE000XZSV718"].source == "fake justETF"
+    assert "timeout" in errors["IE000FAIL001"]

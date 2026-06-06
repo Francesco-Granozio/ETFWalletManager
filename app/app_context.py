@@ -17,6 +17,7 @@ from app.domain import (
     PerformanceReport,
     PortfolioPosition,
     PortfolioSnapshot,
+    PriceQuote,
     RebalanceRow,
     SavedPacSimulation,
 )
@@ -25,7 +26,7 @@ from app.services.pac_execution_service import HistoricalPriceProvider, PacExecu
 from app.services.performance_service import PerformanceService
 from app.services.pac_simulation_service import calculate_pac_simulation
 from app.services.portfolio_service import calculate_allocation
-from app.services.price_service import PriceProvider, PriceService
+from app.services.price_service import JustEtfPriceProvider, PriceProvider, PriceService
 from app.services.rebalance_service import RebalanceMode, calculate_rebalance
 
 
@@ -236,6 +237,22 @@ class AppContext:
             results = PriceService(provider).update_current_prices(repo)
             session.commit()
             return results
+
+    def live_price_quotes(
+        self,
+        isins: list[str],
+        price_provider: PriceProvider | None = None,
+    ) -> tuple[dict[str, PriceQuote], dict[str, str]]:
+        provider = price_provider or JustEtfPriceProvider()
+        quotes: dict[str, PriceQuote] = {}
+        errors: dict[str, str] = {}
+        normalized_isins = sorted({normalize_isin(isin) for isin in isins if isin.strip()})
+        for isin in normalized_isins:
+            try:
+                quotes[isin] = provider.fetch(isin)
+            except Exception as exc:
+                errors[isin] = str(exc) or exc.__class__.__name__
+        return quotes, errors
 
     def settings(self) -> dict[str, str]:
         with self._repo() as repo:
