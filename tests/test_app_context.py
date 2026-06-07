@@ -2,7 +2,13 @@ from datetime import date
 
 from app.app_context import AppContext
 from app.db.database import create_session_factory, init_database
-from app.domain import DEFAULT_PAC_EXECUTION_SCHEDULE, EtfMetadata, PacEtfAllocation, PriceQuote
+from app.domain import (
+    DEFAULT_PAC_EXECUTION_SCHEDULE,
+    EtfMetadata,
+    HistoricalPriceQuote,
+    PacEtfAllocation,
+    PriceQuote,
+)
 
 
 def make_context(tmp_path):
@@ -44,6 +50,29 @@ class FakePriceProvider:
             price=12.34,
             price_date=date(2026, 6, 8),
             source="fake justETF",
+        )
+
+
+class FakeLsPriceProvider:
+    def fetch(self, isin: str) -> PriceQuote:
+        return PriceQuote(
+            isin=isin,
+            price=15.71,
+            price_date=date(2026, 6, 8),
+            source="Lang & Schwarz LSX",
+            currency="EUR",
+            exchange="LSX",
+        )
+
+
+class FakeHistoricalPriceProvider:
+    def fetch(self, isin: str, target_date: date, currency: str = "EUR") -> HistoricalPriceQuote:
+        return HistoricalPriceQuote(
+            isin=isin,
+            price=14.56,
+            price_date=target_date,
+            source="justETF chart",
+            currency=currency,
         )
 
 
@@ -154,3 +183,59 @@ def test_app_context_fetches_live_price_quotes_for_dashboard(tmp_path):
     assert quotes["IE000XZSV718"].price == 12.34
     assert quotes["IE000XZSV718"].source == "fake justETF"
     assert "timeout" in errors["IE000FAIL001"]
+
+
+def test_app_context_clears_provider_cache(tmp_path):
+    context = make_context(tmp_path)
+    provider = FakeMetadataProvider()
+    preview = context.simulate_pac(
+        monthly_pac=100,
+        asset_allocations={
+            "Azioni": 1,
+            "Obbligazioni": 0,
+            "Alternativi": 0,
+        },
+        etf_allocations=[PacEtfAllocation("Azioni", "IE000XZSV718", 1)],
+        metadata_provider=provider,
+    )
+    context.save_pac_simulation(preview)
+
+    result = context.clear_provider_cache()
+
+    assert result["etf_prices"] == 1
+    assert result["price_history"] == 1
+    assert result["metadata_cache"] == 1
+    assert context.positions()[0].price == 0
+
+
+def test_app_context_refreshes_provider_data_for_existing_pacs(tmp_path):
+    context = make_context(tmp_path)
+    provider = FakeMetadataProvider()
+    preview = context.simulate_pac(
+        monthly_pac=100,
+        asset_allocations={
+            "Azioni": 1,
+            "Obbligazioni": 0,
+            "Alternativi": 0,
+        },
+        etf_allocations=[PacEtfAllocation("Azioni", "IE000XZSV718", 1)],
+        metadata_provider=provider,
+    )
+    saved = context.save_simulation_preview(preview, "PAC da aggiornare")
+    context.apply_saved_simulation(saved.id)
+    context.create_manual_pac_execution(
+        saved.id,
+        date(2026, 6, 2),
+        price_provider=FakeHistoricalPriceProvider(),
+    )
+
+    result = context.refresh_provider_data(price_provider=FakeLsPriceProvider())
+
+    assert result["isins"] == 1
+    assert result["updated"]["etfs"] == 1
+    assert result["updated"]["simulation_rows"] == 1
+    assert result["updated"]["execution_rows"] == 1
+    assert result["errors"] == {}
+    assert context.positions()[0].price == 15.71
+    assert context.saved_pac_simulations()[0].rows[0].metadata.price_source == "Lang & Schwarz LSX"
+    assert context.pac_executions()[0].rows[0].current_price_source == "Lang & Schwarz LSX"

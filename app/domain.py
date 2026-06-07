@@ -123,6 +123,7 @@ class PriceQuote:
     price_date: date
     source: str
     currency: str = "EUR"
+    exchange: str = ""
 
 
 @dataclass(slots=True)

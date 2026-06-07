@@ -139,13 +139,13 @@ class DashboardPage(ctk.CTkFrame):
         self.title.grid(row=0, column=0, sticky="w")
         self.update_button = ctk.CTkButton(
             header,
-            text="Aggiorna justETF",
+            text="Aggiorna LS",
             command=self.update_live_prices,
         )
         self.update_button.grid(row=0, column=1, sticky="e")
 
         self.total = KpiBlock(self, "Capitale investito")
-        self.current = KpiBlock(self, "Valore justETF bid")
+        self.current = KpiBlock(self, "Valore LS bid")
         self.result = KpiBlock(self, "Risultato")
         self.latest = KpiBlock(self, "Ultimo PAC")
         for index, block in enumerate((self.total, self.current, self.result, self.latest)):
@@ -162,7 +162,7 @@ class DashboardPage(ctk.CTkFrame):
                 ("total_pct", "% Totale", 110),
                 ("segment_pct", "% Segmento", 120),
                 ("invested", "Investito", 120),
-                ("current", "Valore justETF bid", 130),
+                ("current", "Valore LS bid", 130),
                 ("result", "Risultato", 120),
                 ("result_pct", "Diff %", 90),
                 ("executions", "Esecuzioni", 90),
@@ -196,7 +196,7 @@ class DashboardPage(ctk.CTkFrame):
             quotes, errors = self.context.live_price_quotes(isins)
         except Exception as exc:
             message = str(exc) or exc.__class__.__name__
-            self.after(0, lambda: self._finish_live_price_update({}, {"justETF": message}))
+            self.after(0, lambda: self._finish_live_price_update({}, {"LS": message}))
             return
         self.after(0, lambda: self._finish_live_price_update(quotes, errors))
 
@@ -208,10 +208,10 @@ class DashboardPage(ctk.CTkFrame):
         self.live_quotes = quotes
         self.live_quote_errors = errors
         self.updating_live_prices = False
-        self.update_button.configure(text="Aggiorna justETF", state="normal")
+        self.update_button.configure(text="Aggiorna LS", state="normal")
         self._render_summary()
         if errors and not quotes:
-            messagebox.showerror("justETF", "Nessun prezzo aggiornato da justETF.")
+            messagebox.showerror("LS", "Nessun prezzo aggiornato da Lang & Schwarz.")
 
     def _render_summary(self) -> None:
         summary = build_dashboard_summary(self.current_executions, self.live_quotes)
@@ -360,7 +360,7 @@ def dashboard_meta_text(summary: DashboardPortfolioSummary, errors: dict[str, st
             f"{execution.simulation_name} | {mode}"
         )
     live_date = summary.latest_live_price_date
-    live_text = f"Prezzi live justETF: {date_text(live_date)}" if live_date else "Prezzi live justETF: non aggiornati"
+    live_text = f"Prezzi live LS: {date_text(live_date)}" if live_date else "Prezzi live LS: non aggiornati"
     error_text = f" | Errori: {len(errors)}" if errors else ""
     return f"{pac_text} | Esecuzioni: {summary.execution_count} | ETF: {summary.etf_count} | {live_text}{error_text}"
 

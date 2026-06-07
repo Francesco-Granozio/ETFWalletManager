@@ -231,14 +231,33 @@ class PacExecutionsPage(ctk.CTkFrame):
                 "Inserisci importo, share price e shares validi. Share price e shares vanno compilati insieme.",
             )
             return
+
         execution = self.context.update_pac_execution_row_details(
             row.id,
             invested_amount,
             share_price,
             shares,
         )
+
+        row_item_id = f"execrow-{row.id}"
+
         self.refresh()
-        self._select_execution(execution.id)
+
+        if self.tree.exists(row_item_id):
+            parent_id = self.tree.parent(row_item_id)
+            grandparent_id = self.tree.parent(parent_id)
+
+            if grandparent_id:
+                self.tree.item(grandparent_id, open=True)
+            if parent_id:
+                self.tree.item(parent_id, open=True)
+
+            self.tree.selection_set(row_item_id)
+            self.tree.focus(row_item_id)
+            self.tree.see(row_item_id)
+        else:
+            self._select_execution(execution.id)
+
 
     def delete_selected(self) -> None:
         execution = self._selected_execution()

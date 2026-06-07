@@ -4,7 +4,14 @@ from sqlalchemy import text
 
 from app.db.database import create_session_factory, init_database
 from app.db.repositories import PortfolioRepository
-from app.domain import DEFAULT_PAC_EXECUTION_SCHEDULE, EtfMetadata, PacSimulationPreview, PacSimulationRow
+from app.domain import (
+    DEFAULT_PAC_EXECUTION_SCHEDULE,
+    EtfMetadata,
+    HistoricalPriceQuote,
+    PacSimulationPreview,
+    PacSimulationRow,
+    PriceQuote,
+)
 
 
 def metadata(isin: str = "IE000XZSV718") -> EtfMetadata:
@@ -52,6 +59,154 @@ def test_repository_persists_etf_metadata_cache(tmp_path):
         cached = repo.get_etf_metadata("ie000xzsv718")
 
         assert cached == metadata()
+
+
+def test_repository_clears_provider_price_and_metadata_cache_without_removing_portfolio(tmp_path):
+    db_path = tmp_path / "portfolio.db"
+    session_factory = create_session_factory(db_path)
+    init_database(session_factory)
+    preview = PacSimulationPreview(
+        monthly_pac=100,
+        round_up=False,
+        real_monthly_pac=100,
+        rows=[
+            PacSimulationRow(
+                asset_class="Azioni",
+                asset_class_pct=1,
+                segment_pct=1,
+                target_pct=1,
+                nominal_amount=100,
+                effective_amount=100,
+                metadata=metadata(),
+            )
+        ],
+    )
+
+    with session_factory() as session:
+        repo = PortfolioRepository(session)
+        repo.replace_portfolio_from_preview(preview)
+        position = repo.list_positions()[0]
+        repo.save_price(position.etf_id, price=15.71, price_date=date(2026, 6, 8), source="Lang & Schwarz LSX")
+        session.commit()
+
+    with session_factory() as session:
+        repo = PortfolioRepository(session)
+        result = repo.clear_provider_cache()
+        session.commit()
+
+    with session_factory() as session:
+        repo = PortfolioRepository(session)
+        positions = repo.list_positions()
+
+        assert result == {
+            "etf_prices": 1,
+            "price_history": 2,
+            "metadata_cache": 1,
+        }
+        assert len(positions) == 1
+        assert positions[0].isin == "IE000XZSV718"
+        assert positions[0].price == 0
+        assert positions[0].price_date is None
+        assert positions[0].price_source == "cache cleared"
+        assert repo.find_price(positions[0].etf_id, date(2026, 6, 6)) is None
+        assert repo.find_price(positions[0].etf_id, date(2026, 6, 8)) is None
+        assert repo.get_etf_metadata("IE000XZSV718") is None
+
+
+def test_repository_refreshes_saved_pac_and_execution_provider_data_without_recreating_rows(tmp_path):
+    db_path = tmp_path / "portfolio.db"
+    session_factory = create_session_factory(db_path)
+    init_database(session_factory)
+    preview = PacSimulationPreview(
+        monthly_pac=100,
+        round_up=False,
+        real_monthly_pac=100,
+        rows=[
+            PacSimulationRow(
+                asset_class="Azioni",
+                asset_class_pct=1,
+                segment_pct=1,
+                target_pct=1,
+                nominal_amount=100,
+                effective_amount=100,
+                metadata=metadata(),
+            )
+        ],
+    )
+
+    with session_factory() as session:
+        repo = PortfolioRepository(session)
+        simulation = repo.save_simulation_preview(preview, name="PAC LS")
+        repo.replace_portfolio_from_preview(preview)
+        execution = repo.save_pac_execution_from_simulation(
+            simulation,
+            execution_date=date(2026, 6, 2),
+            quotes={
+                "IE000XZSV718": HistoricalPriceQuote(
+                    isin="IE000XZSV718",
+                    price=14.56,
+                    price_date=date(2026, 6, 2),
+                    source="justETF chart",
+                )
+            },
+        )
+        repo.update_pac_execution_row_details(
+            execution.rows[0].id,
+            invested_amount=100,
+            share_price=14.5,
+            shares=6.896552,
+        )
+        session.commit()
+
+    with session_factory() as session:
+        repo = PortfolioRepository(session)
+        assert repo.provider_refresh_isins() == ["IE000XZSV718"]
+
+        result = repo.refresh_provider_data(
+            {
+                "IE000XZSV718": PriceQuote(
+                    isin="IE000XZSV718",
+                    price=15.71,
+                    price_date=date(2026, 6, 8),
+                    source="Lang & Schwarz LSX",
+                    currency="EUR",
+                    exchange="LSX",
+                )
+            }
+        )
+        session.commit()
+
+    with session_factory() as session:
+        repo = PortfolioRepository(session)
+        position = repo.list_positions()[0]
+        simulation = repo.list_simulations()[0]
+        execution = repo.list_pac_executions()[0]
+        row = execution.rows[0]
+        cached = repo.get_etf_metadata("IE000XZSV718")
+
+        assert result == {
+            "etfs": 1,
+            "simulation_rows": 1,
+            "execution_rows": 1,
+            "metadata_cache": 1,
+            "price_history": 1,
+        }
+        assert position.price == 15.71
+        assert position.price_source == "Lang & Schwarz LSX"
+        assert position.exchange == "LSX"
+        assert simulation.rows[0].metadata.price == 15.71
+        assert simulation.rows[0].metadata.price_source == "Lang & Schwarz LSX"
+        assert simulation.rows[0].metadata.exchange == "LSX"
+        assert cached is not None
+        assert cached.price == 15.71
+        assert cached.price_source == "Lang & Schwarz LSX"
+        assert row.current_price == 15.71
+        assert row.current_price_source == "Lang & Schwarz LSX"
+        assert row.share_price == 14.5
+        assert row.shares == 6.896552
+        assert row.previous_price is None
+        assert row.price_diff is None
+        assert row.price_diff_pct is None
 
 
 def test_repository_replaces_portfolio_from_manual_pac_preview(tmp_path):

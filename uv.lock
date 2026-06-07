@@ -556,6 +556,7 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "apscheduler" },
+    { name = "beautifulsoup4" },
     { name = "customtkinter" },
     { name = "justetf-scraping" },
     { name = "matplotlib" },
@@ -574,6 +575,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "apscheduler", specifier = ">=3.11.0" },
+    { name = "beautifulsoup4", specifier = ">=4.14.0" },
     { name = "customtkinter", specifier = ">=5.2.2" },
     { name = "justetf-scraping", git = "https://github.com/druzsan/justetf-scraping.git" },
     { name = "matplotlib", specifier = ">=3.10.0" },

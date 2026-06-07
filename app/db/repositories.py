@@ -15,6 +15,7 @@ from app.domain import (
     PacSimulationRow,
     PortfolioPosition,
     PortfolioSnapshot,
+    PriceQuote,
     SavedPacSimulation,
 )
 from app.db.models import (
@@ -159,6 +160,103 @@ class PortfolioRepository:
         else:
             history.price = float(price)
             history.source = source
+
+    def _upsert_price_history(self, etf_id: int, quote: PriceQuote) -> None:
+        history = self.session.scalar(
+            select(PriceHistoryModel).where(
+                PriceHistoryModel.etf_id == etf_id,
+                PriceHistoryModel.date == quote.price_date,
+            )
+        )
+        if not history:
+            history = PriceHistoryModel(
+                etf_id=etf_id,
+                date=quote.price_date,
+                price=quote.price,
+                source=quote.source,
+            )
+            self.session.add(history)
+            return
+        history.price = float(quote.price)
+        history.source = quote.source
+
+    def clear_provider_cache(self) -> dict[str, int]:
+        etf_price_count = self.session.scalar(select(func.count(EtfModel.id))) or 0
+        price_history_result = self.session.execute(delete(PriceHistoryModel))
+        metadata_result = self.session.execute(delete(EtfMetadataCacheModel))
+        for etf in self.session.scalars(select(EtfModel)):
+            etf.price = 0
+            etf.price_date = None
+            etf.price_source = "cache cleared"
+        return {
+            "etf_prices": int(etf_price_count),
+            "price_history": int(price_history_result.rowcount or 0),
+            "metadata_cache": int(metadata_result.rowcount or 0),
+        }
+
+    def provider_refresh_isins(self) -> list[str]:
+        isins: set[str] = set()
+        for model in (EtfModel, PacSimulationRowModel, PacExecutionRowModel, EtfMetadataCacheModel):
+            isins.update(
+                _normalize_isin(isin)
+                for isin in self.session.scalars(select(model.isin))
+                if isin and isin.strip()
+            )
+        return sorted(isins)
+
+    def refresh_provider_data(self, quotes: dict[str, PriceQuote]) -> dict[str, int]:
+        quotes_by_isin = {
+            _normalize_isin(isin): quote
+            for isin, quote in quotes.items()
+            if isin and quote is not None
+        }
+        result = {
+            "etfs": 0,
+            "simulation_rows": 0,
+            "execution_rows": 0,
+            "metadata_cache": 0,
+            "price_history": 0,
+        }
+        if not quotes_by_isin:
+            return result
+
+        for etf in self.session.scalars(select(EtfModel)):
+            quote = quotes_by_isin.get(_normalize_isin(etf.isin))
+            if quote is None:
+                continue
+            _apply_quote_to_price_fields(etf, quote)
+            self._upsert_price_history(etf.id, quote)
+            result["etfs"] += 1
+            result["price_history"] += 1
+
+        for row in self.session.scalars(select(PacSimulationRowModel)):
+            quote = quotes_by_isin.get(_normalize_isin(row.isin))
+            if quote is None:
+                continue
+            _apply_quote_to_price_fields(row, quote)
+            result["simulation_rows"] += 1
+
+        for row in self.session.scalars(select(PacExecutionRowModel)):
+            quote = quotes_by_isin.get(_normalize_isin(row.isin))
+            if quote is None:
+                continue
+            row.current_price = float(quote.price)
+            row.current_price_date = quote.price_date
+            row.current_price_source = quote.source
+            row.currency = quote.currency or row.currency
+            row.previous_price = None
+            row.price_diff = None
+            row.price_diff_pct = None
+            result["execution_rows"] += 1
+
+        for cached in self.session.scalars(select(EtfMetadataCacheModel)):
+            quote = quotes_by_isin.get(_normalize_isin(cached.isin))
+            if quote is None:
+                continue
+            _apply_quote_to_price_fields(cached, quote)
+            result["metadata_cache"] += 1
+
+        return result
 
     def get_etf_metadata(self, isin: str) -> EtfMetadata | None:
         model = self.session.get(EtfMetadataCacheModel, _normalize_isin(isin))
@@ -635,6 +733,16 @@ class PortfolioRepository:
 
 def _normalize_isin(isin: str) -> str:
     return isin.strip().upper()
+
+
+def _apply_quote_to_price_fields(model, quote: PriceQuote) -> None:
+    model.price = float(quote.price)
+    model.price_date = quote.price_date
+    model.price_source = quote.source
+    if quote.currency:
+        model.currency = quote.currency
+    if quote.exchange:
+        model.exchange = quote.exchange
 
 
 def _to_simulation_row(model: PacSimulationRowModel) -> PacSimulationRow:

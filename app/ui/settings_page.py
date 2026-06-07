@@ -28,6 +28,8 @@ class SettingsPage(ctk.CTkFrame):
         self.fallback_price = _combo(self, "Fallback prezzo", ["last_available", "manual"], 7)
 
         ctk.CTkButton(self, text="Salva impostazioni", command=self.save).grid(row=8, column=0, columnspan=2, sticky="ew", padx=18, pady=(18, 8))
+        ctk.CTkButton(self, text="Pulisci cache prezzi", command=self.clear_provider_cache).grid(row=9, column=0, columnspan=2, sticky="ew", padx=18, pady=(8, 8))
+        ctk.CTkButton(self, text="Aggiorna dati ETF PAC da LS", command=self.refresh_provider_data).grid(row=10, column=0, columnspan=2, sticky="ew", padx=18, pady=(8, 8))
         self.grid_columnconfigure(1, weight=1)
 
     def refresh(self) -> None:
@@ -58,6 +60,41 @@ class SettingsPage(ctk.CTkFrame):
         self.context.save_settings(values)
         ctk.set_appearance_mode(values["theme"])
         messagebox.showinfo("Impostazioni", "Impostazioni salvate.")
+
+    def clear_provider_cache(self) -> None:
+        confirmed = messagebox.askyesno(
+            "Pulisci cache prezzi",
+            "Vuoi cancellare cache prezzi e metadata justETF/LS? Le esecuzioni PAC e le quote acquistate restano invariate.",
+        )
+        if not confirmed:
+            return
+        result = self.context.clear_provider_cache()
+        messagebox.showinfo(
+            "Pulisci cache prezzi",
+            (
+                "Cache pulita.\n"
+                f"Prezzi ETF azzerati: {result['etf_prices']}\n"
+                f"Storico prezzi rimosso: {result['price_history']}\n"
+                f"Metadata rimossi: {result['metadata_cache']}"
+            ),
+        )
+
+    def refresh_provider_data(self) -> None:
+        result = self.context.refresh_provider_data()
+        updated = result["updated"]
+        errors = result["errors"]
+        message = (
+            "Aggiornamento completato.\n"
+            f"ISIN analizzati: {result['isins']}\n"
+            f"ETF aggiornati: {updated['etfs']}\n"
+            f"Righe simulazioni PAC: {updated['simulation_rows']}\n"
+            f"Righe esecuzioni PAC: {updated['execution_rows']}\n"
+            f"Metadata cache: {updated['metadata_cache']}\n"
+            f"Storico prezzi: {updated['price_history']}"
+        )
+        if errors:
+            message = f"{message}\nErrori: {len(errors)}"
+        messagebox.showinfo("Aggiorna dati ETF PAC da LS", message)
 
     @staticmethod
     def _set_switch(switch: ctk.CTkSwitch, enabled: bool) -> None:

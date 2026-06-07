@@ -1,7 +1,14 @@
-from datetime import date
+from datetime import UTC, date, datetime
+from decimal import Decimal
 
 from app.domain import PortfolioPosition, PriceQuote
-from app.services.price_service import PriceService, _quote_price
+from app.services.price_service import (
+    JustEtfPriceProvider,
+    LangSchwarzPriceProvider,
+    PriceService,
+    create_price_provider,
+    _quote_price,
+)
 
 
 def position(isin: str) -> PortfolioPosition:
@@ -87,3 +94,40 @@ def test_quote_price_prefers_bid_over_stale_last_price():
     }
 
     assert _quote_price(quote) == 15.71
+
+
+class FakeLangSchwarzScraper:
+    def get_quote(self, isin: str):
+        return {
+            "isin": isin,
+            "exchange": "LSX",
+            "price": Decimal("15.71"),
+            "bid": Decimal("15.71"),
+            "ask": Decimal("15.82"),
+            "mid": Decimal("15.765"),
+            "last": Decimal("16.12"),
+            "timestamp": datetime(2026, 6, 5, 20, 59, tzinfo=UTC),
+            "currency": "EUR",
+        }
+
+
+def test_lang_schwarz_provider_adapts_scraper_quote_to_app_price_quote():
+    provider = LangSchwarzPriceProvider(scraper=FakeLangSchwarzScraper())
+
+    quote = provider.fetch("ie000xzsv718")
+
+    assert quote == PriceQuote(
+        isin="IE000XZSV718",
+        price=15.71,
+        price_date=date(2026, 6, 5),
+        source="Lang & Schwarz LSX",
+        currency="EUR",
+        exchange="LSX",
+    )
+
+
+def test_create_price_provider_defaults_to_lang_schwarz_and_keeps_justetf_switch():
+    assert isinstance(create_price_provider(), LangSchwarzPriceProvider)
+    assert isinstance(create_price_provider("ls"), LangSchwarzPriceProvider)
+    assert isinstance(create_price_provider("lsx"), LangSchwarzPriceProvider)
+    assert isinstance(create_price_provider("justetf"), JustEtfPriceProvider)

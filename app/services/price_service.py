@@ -11,6 +11,18 @@ class PriceProvider(Protocol):
     def fetch(self, isin: str) -> PriceQuote: ...
 
 
+DEFAULT_PRICE_PROVIDER = "ls"
+
+
+def create_price_provider(provider: str | None = None) -> PriceProvider:
+    selected = (provider or DEFAULT_PRICE_PROVIDER).strip().lower()
+    if selected in {"ls", "lsx", "l&s", "lang-schwarz", "lang_schwarz"}:
+        return LangSchwarzPriceProvider()
+    if selected in {"justetf", "justetf-gettex", "gettex"}:
+        return JustEtfPriceProvider()
+    raise ValueError(f"Unknown price provider: {provider}")
+
+
 class JustEtfPriceProvider:
     source = "justETF Gettex"
 
@@ -26,12 +38,42 @@ class JustEtfPriceProvider:
             price_date=_quote_date(quote),
             source=self.source,
             currency=_quote_field(quote, "currency") or "EUR",
+            exchange=(_quote_field(quote, "exchange") or "GETTEX").upper(),
         )
+
+
+class LangSchwarzPriceProvider:
+    source = "Lang & Schwarz LSX"
+
+    def __init__(self, scraper: object | None = None):
+        self.scraper = scraper
+
+    def fetch(self, isin: str) -> PriceQuote:
+        normalized_isin = isin.strip().upper()
+        quote = self._scraper().get_quote(normalized_isin)
+        price = _quote_price(quote)
+        if price is None or price <= 0:
+            raise ValueError(f"No valid Lang & Schwarz price for {normalized_isin}")
+        return PriceQuote(
+            isin=normalized_isin,
+            price=price,
+            price_date=_quote_date(quote),
+            source=self.source,
+            currency=_quote_field(quote, "currency") or "EUR",
+            exchange=_quote_field(quote, "exchange") or "LSX",
+        )
+
+    def _scraper(self) -> object:
+        if self.scraper is None:
+            from app.services.lang_schwarz_scraper import LangSchwarzScraper
+
+            self.scraper = LangSchwarzScraper()
+        return self.scraper
 
 
 class PriceService:
     def __init__(self, provider: PriceProvider | None = None):
-        self.provider = provider or JustEtfPriceProvider()
+        self.provider = provider or create_price_provider()
 
     def update_current_prices(self, repository) -> list[PriceUpdateResult]:
         results: list[PriceUpdateResult] = []
@@ -71,7 +113,7 @@ def _failure(position: PortfolioPosition, exc: Exception) -> PriceUpdateResult:
 
 
 def _quote_price(quote: object) -> float | None:
-    for field in ("bid", "mid", "ask", "last"):
+    for field in ("price", "bid", "mid", "ask", "last"):
         value = _quote_field(quote, field)
         if value is not None:
             return float(value)

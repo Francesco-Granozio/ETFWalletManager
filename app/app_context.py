@@ -26,7 +26,7 @@ from app.services.pac_execution_service import HistoricalPriceProvider, PacExecu
 from app.services.performance_service import PerformanceService
 from app.services.pac_simulation_service import calculate_pac_simulation
 from app.services.portfolio_service import calculate_allocation
-from app.services.price_service import JustEtfPriceProvider, PriceProvider, PriceService
+from app.services.price_service import PriceProvider, PriceService, create_price_provider
 from app.services.rebalance_service import RebalanceMode, calculate_rebalance
 
 
@@ -260,7 +260,7 @@ class AppContext:
         isins: list[str],
         price_provider: PriceProvider | None = None,
     ) -> tuple[dict[str, PriceQuote], dict[str, str]]:
-        provider = price_provider or JustEtfPriceProvider()
+        provider = price_provider or create_price_provider()
         quotes: dict[str, PriceQuote] = {}
         errors: dict[str, str] = {}
         normalized_isins = sorted({normalize_isin(isin) for isin in isins if isin.strip()})
@@ -270,6 +270,35 @@ class AppContext:
             except Exception as exc:
                 errors[isin] = str(exc) or exc.__class__.__name__
         return quotes, errors
+
+    def clear_provider_cache(self) -> dict[str, int]:
+        with self._session() as session:
+            result = PortfolioRepository(session).clear_provider_cache()
+            session.commit()
+            return result
+
+    def refresh_provider_data(
+        self,
+        price_provider: PriceProvider | None = None,
+    ) -> dict[str, object]:
+        provider = price_provider or create_price_provider()
+        with self._session() as session:
+            repo = PortfolioRepository(session)
+            isins = repo.provider_refresh_isins()
+            quotes: dict[str, PriceQuote] = {}
+            errors: dict[str, str] = {}
+            for isin in isins:
+                try:
+                    quotes[isin] = provider.fetch(isin)
+                except Exception as exc:
+                    errors[isin] = str(exc) or exc.__class__.__name__
+            updated = repo.refresh_provider_data(quotes)
+            session.commit()
+            return {
+                "isins": len(isins),
+                "updated": updated,
+                "errors": errors,
+            }
 
     def settings(self) -> dict[str, str]:
         with self._repo() as repo:
