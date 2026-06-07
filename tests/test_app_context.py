@@ -9,6 +9,8 @@ from app.domain import (
     PacEtfAllocation,
     PriceQuote,
 )
+from app.services.dashboard_service import build_dashboard_summary
+from app.services.rebalance_service import RebalanceMode
 
 
 def make_context(tmp_path):
@@ -183,6 +185,55 @@ def test_app_context_fetches_live_price_quotes_for_dashboard(tmp_path):
     assert quotes["IE000XZSV718"].price == 12.34
     assert quotes["IE000XZSV718"].source == "fake justETF"
     assert "timeout" in errors["IE000FAIL001"]
+
+
+def test_app_context_persists_dashboard_snapshot_and_builds_rebalance_plan(tmp_path):
+    context = make_context(tmp_path)
+    provider = FakeMetadataProvider()
+    preview = context.simulate_pac(
+        monthly_pac=100,
+        asset_allocations={
+            "Azioni": 1,
+            "Obbligazioni": 0,
+            "Alternativi": 0,
+        },
+        etf_allocations=[PacEtfAllocation("Azioni", "IE000XZSV718", 1)],
+        metadata_provider=provider,
+    )
+    saved = context.save_simulation_preview(preview, "PAC target")
+    execution = context.create_manual_pac_execution(
+        saved.id,
+        date(2026, 6, 2),
+        price_provider=FakeHistoricalPriceProvider(),
+    )
+    context.update_pac_execution_row_details(
+        execution.rows[0].id,
+        invested_amount=50,
+        share_price=10,
+        shares=5,
+    )
+    summary = build_dashboard_summary(
+        context.pac_executions(),
+        {
+            "IE000XZSV718": PriceQuote(
+                isin="IE000XZSV718",
+                price=10,
+                price_date=date(2026, 6, 8),
+                source="Lang & Schwarz LSX",
+            )
+        },
+    )
+
+    context.save_dashboard_snapshot(summary, {})
+    snapshot = context.latest_dashboard_snapshot()
+    plan = context.rebalance_plan_for_simulation(saved.id, RebalanceMode.ONLY_UNDERWEIGHT)
+
+    assert snapshot is not None
+    assert snapshot.current_value == 50
+    assert plan.simulation_id == saved.id
+    assert plan.budget == 100
+    assert plan.rows[0].isin == "IE000XZSV718"
+    assert plan.rows[0].buy_amount == 100
 
 
 def test_app_context_clears_provider_cache(tmp_path):

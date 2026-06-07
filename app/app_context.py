@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.db.repositories import PortfolioRepository
 from app.domain import (
     AllocationSummary,
+    DashboardSnapshot,
     DEFAULT_PAC_EXECUTION_SCHEDULE,
     EtfMetadata,
     PacExecution,
@@ -18,16 +19,18 @@ from app.domain import (
     PortfolioPosition,
     PortfolioSnapshot,
     PriceQuote,
+    RebalancePlan,
     RebalanceRow,
     SavedPacSimulation,
 )
+from app.services.dashboard_service import DashboardPortfolioSummary, dashboard_snapshot_from_summary
 from app.services.etf_metadata_service import EtfMetadataProvider, EtfMetadataService, normalize_isin
 from app.services.pac_execution_service import HistoricalPriceProvider, PacExecutionService
 from app.services.performance_service import PerformanceService
 from app.services.pac_simulation_service import calculate_pac_simulation
 from app.services.portfolio_service import calculate_allocation
 from app.services.price_service import PriceProvider, PriceService, create_price_provider
-from app.services.rebalance_service import RebalanceMode, calculate_rebalance
+from app.services.rebalance_service import RebalanceMode, calculate_rebalance, calculate_rebalance_plan
 
 
 class AppContext:
@@ -55,6 +58,36 @@ class AppContext:
             selected_pac = repo.get_monthly_pac() if monthly_pac is None else monthly_pac
             selected_mode = RebalanceMode(mode)
             return calculate_rebalance(repo.list_positions(), selected_pac, selected_mode)
+
+    def save_dashboard_snapshot(
+        self,
+        summary: DashboardPortfolioSummary,
+        quote_errors: dict[str, str],
+    ) -> DashboardSnapshot:
+        snapshot = dashboard_snapshot_from_summary(summary, quote_errors)
+        with self._session() as session:
+            saved = PortfolioRepository(session).save_dashboard_snapshot(snapshot)
+            session.commit()
+            return saved
+
+    def latest_dashboard_snapshot(self) -> DashboardSnapshot | None:
+        with self._repo() as repo:
+            return repo.latest_dashboard_snapshot()
+
+    def rebalance_plan_for_simulation(
+        self,
+        simulation_id: int,
+        mode: RebalanceMode | str = RebalanceMode.ONLY_UNDERWEIGHT,
+        overrides: dict[str, str] | None = None,
+    ) -> RebalancePlan:
+        with self._repo() as repo:
+            simulation = repo.get_simulation(simulation_id)
+            if simulation is None:
+                raise ValueError(f"PAC non trovato: {simulation_id}")
+            snapshot = repo.latest_dashboard_snapshot()
+            if snapshot is None:
+                raise ValueError("Aggiorna prima i valori LS dalla dashboard.")
+            return calculate_rebalance_plan(snapshot, simulation, RebalanceMode(mode), overrides)
 
     def performance_report(self, today: date | None = None) -> PerformanceReport:
         with self._repo() as repo:

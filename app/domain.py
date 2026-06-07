@@ -127,6 +127,85 @@ class PriceQuote:
 
 
 @dataclass(slots=True)
+class DashboardSnapshotRow:
+    asset_class: str
+    segment: str
+    name: str
+    isin: str
+    invested_amount: float
+    units: float
+    missing_data: bool
+    live_price: float | None
+    live_price_date: date | None
+    live_price_source: str
+    current_value: float | None
+    result_value: float | None
+    execution_count: int
+    id: int | None = None
+
+
+@dataclass(slots=True)
+class DashboardSnapshot:
+    total_invested: float
+    current_value: float | None
+    result_value: float | None
+    result_pct: float | None
+    latest_live_price_date: date | None
+    execution_count: int
+    etf_count: int
+    quote_error_count: int
+    rows: list[DashboardSnapshotRow]
+    id: int | None = None
+    captured_at: datetime | None = None
+
+
+@dataclass(slots=True)
+class RebalancePlanRow:
+    asset_class: str
+    segment: str
+    name: str
+    isin: str
+    target_pct: float
+    current_value: float | None
+    current_weight: float | None
+    drift_value: float | None
+    drift_pct: float | None
+    status: str
+    action: str
+    buy_amount: float
+    estimated_units: float | None
+    price: float | None
+    reason: str
+
+
+@dataclass(slots=True)
+class RebalanceOperation:
+    asset_class: str
+    segment: str
+    name: str
+    isin: str
+    buy_amount: float
+    estimated_units: float | None
+    reason: str
+
+
+@dataclass(slots=True)
+class RebalancePlan:
+    simulation_id: int
+    simulation_name: str
+    snapshot_id: int | None
+    snapshot_captured_at: datetime | None
+    latest_live_price_date: date | None
+    budget: float
+    total_current_value: float
+    underweight_count: int
+    overweight_count: int
+    rows: list[RebalancePlanRow]
+    operations: list[RebalanceOperation]
+    warnings: list[str]
+
+
+@dataclass(slots=True)
 class HistoricalPriceQuote:
     isin: str
     price: float

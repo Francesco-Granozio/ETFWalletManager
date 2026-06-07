@@ -2,15 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date
-import threading
-from tkinter import messagebox
 
-import customtkinter as ctk
-
-from app.app_context import AppContext
-from app.domain import PacExecution, PriceQuote
-from app.services import dashboard_service
-from app.ui.widgets import DataTable, KpiBlock
+from app.domain import DashboardSnapshot, DashboardSnapshotRow, PacExecution, PriceQuote
 from app.ui.widgets import asset_class_tag
 from app.utils.formatting import date_text, money, pct
 
@@ -124,111 +117,6 @@ class DashboardPortfolioSummary:
         return max(dates, default=None)
 
 
-class DashboardPage(ctk.CTkFrame):
-    def __init__(self, master, context: AppContext):
-        super().__init__(master, fg_color="transparent")
-        self.context = context
-        self.current_executions: list[PacExecution] = []
-        self.live_quotes: dict[str, PriceQuote] = {}
-        self.live_quote_errors: dict[str, str] = {}
-        self.updating_live_prices = False
-
-        header = ctk.CTkFrame(self, fg_color="transparent")
-        header.grid(row=0, column=0, sticky="ew", padx=18, pady=(18, 10), columnspan=4)
-        header.grid_columnconfigure(0, weight=1)
-        self.title = ctk.CTkLabel(header, text="Dashboard", font=ctk.CTkFont(size=24, weight="bold"))
-        self.title.grid(row=0, column=0, sticky="w")
-        self.update_button = ctk.CTkButton(
-            header,
-            text="Aggiorna LS",
-            command=self.update_live_prices,
-        )
-        self.update_button.grid(row=0, column=1, sticky="e")
-
-        self.total = KpiBlock(self, "Capitale investito")
-        self.current = KpiBlock(self, "Valore LS bid")
-        self.result = KpiBlock(self, "Risultato")
-        self.latest = KpiBlock(self, "Ultimo PAC")
-        for index, block in enumerate((self.total, self.current, self.result, self.latest)):
-            block.grid(row=1, column=index, sticky="nsew", padx=(18 if index == 0 else 8, 18 if index == 3 else 8), pady=8)
-            self.grid_columnconfigure(index, weight=1)
-
-        self.meta = ctk.CTkLabel(self, text="", anchor="w")
-        self.meta.grid(row=2, column=0, columnspan=4, sticky="ew", padx=18, pady=(6, 8))
-
-        self.asset_table = DataTable(
-            self,
-            [
-                ("asset", "Asset Class", 150),
-                ("total_pct", "% Totale", 110),
-                ("segment_pct", "% Segmento", 120),
-                ("invested", "Investito", 120),
-                ("current", "Valore LS bid", 130),
-                ("result", "Risultato", 120),
-                ("result_pct", "Diff %", 90),
-                ("executions", "Esecuzioni", 90),
-                ("name", "Strumento", 320),
-                ("isin", "ISIN", 130),
-            ],
-        )
-        self.asset_table.grid(row=3, column=0, columnspan=4, sticky="nsew", padx=18, pady=(8, 18))
-        self.grid_rowconfigure(3, weight=1)
-
-    def refresh(self) -> None:
-        self.current_executions = self.context.pac_executions()
-        self._render_summary()
-
-    def update_live_prices(self) -> None:
-        if self.updating_live_prices:
-            return
-        if not self.current_executions:
-            self.current_executions = self.context.pac_executions()
-        isins = dashboard_isins(self.current_executions)
-        if not isins:
-            messagebox.showinfo("Dashboard", "Nessun ETF nelle esecuzioni PAC.")
-            return
-        self.updating_live_prices = True
-        self.update_button.configure(text="Aggiornamento...", state="disabled")
-        thread = threading.Thread(target=self._fetch_live_prices, args=(isins,), daemon=True)
-        thread.start()
-
-    def _fetch_live_prices(self, isins: list[str]) -> None:
-        try:
-            quotes, errors = self.context.live_price_quotes(isins)
-        except Exception as exc:
-            message = str(exc) or exc.__class__.__name__
-            self.after(0, lambda: self._finish_live_price_update({}, {"LS": message}))
-            return
-        self.after(0, lambda: self._finish_live_price_update(quotes, errors))
-
-    def _finish_live_price_update(
-        self,
-        quotes: dict[str, PriceQuote],
-        errors: dict[str, str],
-    ) -> None:
-        self.live_quotes = quotes
-        self.live_quote_errors = errors
-        self.updating_live_prices = False
-        self.update_button.configure(text="Aggiorna LS", state="normal")
-        summary = self._render_summary()
-        try:
-            self.context.save_dashboard_snapshot(summary, errors)
-        except Exception as exc:
-            messagebox.showerror("Dashboard", f"Snapshot LS non salvato: {exc}")
-        if errors and not quotes:
-            messagebox.showerror("LS", "Nessun prezzo aggiornato da Lang & Schwarz.")
-
-    def _render_summary(self):
-        summary = dashboard_service.build_dashboard_summary(self.current_executions, self.live_quotes)
-        self.total.set_value(money(summary.total_invested))
-        self.current.set_value(money(summary.current_value))
-        self.result.set_value(_result_text(summary.result_value, summary.result_pct))
-        self.latest.set_value(date_text(summary.latest_execution.execution_date if summary.latest_execution else None))
-        self.meta.configure(text=dashboard_service.dashboard_meta_text(summary, self.live_quote_errors))
-        self.asset_table.set_rows(dashboard_service.dashboard_table_rows(summary))
-        return summary
-
-
 def build_dashboard_summary(
     executions: list[PacExecution],
     live_quotes: dict[str, PriceQuote] | None = None,
@@ -288,6 +176,44 @@ def build_dashboard_summary(
         execution_count=len(executions),
         latest_execution=latest_execution,
         asset_classes=asset_classes,
+    )
+
+
+def dashboard_snapshot_from_summary(
+    summary: DashboardPortfolioSummary,
+    errors: dict[str, str],
+) -> DashboardSnapshot:
+    rows: list[DashboardSnapshotRow] = []
+    for asset in _ordered_asset_groups(summary.asset_classes):
+        for etf in sorted(asset.etfs.values(), key=lambda item: (item.segment.lower(), item.isin)):
+            current_value = etf.current_value
+            rows.append(
+                DashboardSnapshotRow(
+                    asset_class=etf.asset_class,
+                    segment=etf.segment,
+                    name=etf.name,
+                    isin=etf.isin.strip().upper(),
+                    invested_amount=etf.invested_amount,
+                    units=etf.units,
+                    missing_data=current_value is None,
+                    live_price=etf.live_price,
+                    live_price_date=etf.live_price_date,
+                    live_price_source=etf.live_price_source,
+                    current_value=current_value,
+                    result_value=etf.result_value,
+                    execution_count=len(etf.execution_ids),
+                )
+            )
+    return DashboardSnapshot(
+        total_invested=summary.total_invested,
+        current_value=summary.current_value,
+        result_value=summary.result_value,
+        result_pct=summary.result_pct,
+        latest_live_price_date=summary.latest_live_price_date,
+        execution_count=summary.execution_count,
+        etf_count=summary.etf_count,
+        quote_error_count=len(errors),
+        rows=rows,
     )
 
 
@@ -421,9 +347,3 @@ def _ratio(value: float, total: float) -> float:
     if total == 0:
         return 0
     return value / total
-
-
-build_dashboard_summary = dashboard_service.build_dashboard_summary
-dashboard_table_rows = dashboard_service.dashboard_table_rows
-dashboard_meta_text = dashboard_service.dashboard_meta_text
-dashboard_isins = dashboard_service.dashboard_isins

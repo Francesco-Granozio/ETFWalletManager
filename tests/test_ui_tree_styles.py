@@ -2,7 +2,17 @@ from datetime import UTC, datetime
 
 import pytest
 
-from app.domain import EtfMetadata, PacExecution, PacExecutionRow, PacSimulationRow, PriceQuote, SavedPacSimulation
+from app.domain import (
+    EtfMetadata,
+    PacExecution,
+    PacExecutionRow,
+    PacSimulationRow,
+    PriceQuote,
+    RebalanceOperation,
+    RebalancePlan,
+    RebalancePlanRow,
+    SavedPacSimulation,
+)
 from app.ui.dashboard import build_dashboard_summary, dashboard_table_rows
 from app.ui.pac_executions_page import (
     execution_tree_items,
@@ -13,6 +23,7 @@ from app.ui.pac_executions_page import (
     trend_pct,
 )
 from app.ui.pac_simulation_page import preview_table_rows, simulation_tree_items
+from app.ui.rebalance_page import rebalance_table_rows
 from app.ui.widgets import asset_class_tag, treeview_palette, treeview_tag_colors
 
 
@@ -28,6 +39,77 @@ def test_treeview_palette_uses_dark_colors_for_dark_mode():
 def test_asset_class_tag_maps_known_groups():
     assert asset_class_tag("Azioni") == "asset_azioni"
     assert asset_class_tag("Obbligazioni") == "asset_obbligazioni"
+
+
+def test_rebalance_table_rows_formats_plan_rows_with_status_tags():
+    plan = RebalancePlan(
+        simulation_id=1,
+        simulation_name="PAC target",
+        snapshot_id=2,
+        snapshot_captured_at=datetime(2026, 6, 8, tzinfo=UTC),
+        latest_live_price_date=datetime(2026, 6, 8, tzinfo=UTC).date(),
+        budget=102,
+        total_current_value=1_000,
+        underweight_count=1,
+        overweight_count=1,
+        rows=[
+            RebalancePlanRow(
+                asset_class="Azioni",
+                segment="S&P 500",
+                name="ETF Azionario",
+                isin="AAA",
+                target_pct=0.60,
+                current_value=500,
+                current_weight=0.50,
+                drift_value=-100,
+                drift_pct=-0.10,
+                status="Sottopesato",
+                action="Auto",
+                buy_amount=102,
+                estimated_units=10.2,
+                price=10,
+                reason="Deficit rispetto al target",
+            ),
+            RebalancePlanRow(
+                asset_class="Obbligazioni",
+                segment="Gov Bond",
+                name="ETF Bond",
+                isin="BBB",
+                target_pct=0.40,
+                current_value=None,
+                current_weight=None,
+                drift_value=None,
+                drift_pct=None,
+                status="Non calcolabile",
+                action="Auto",
+                buy_amount=0,
+                estimated_units=None,
+                price=None,
+                reason="Dati dashboard incompleti",
+            ),
+        ],
+        operations=[
+            RebalanceOperation(
+                asset_class="Azioni",
+                segment="S&P 500",
+                name="ETF Azionario",
+                isin="AAA",
+                buy_amount=102,
+                estimated_units=10.2,
+                reason="Deficit rispetto al target",
+            )
+        ],
+        warnings=[],
+    )
+
+    rows = rebalance_table_rows(plan)
+
+    assert rows[0][1][1] == "Sottopesato"
+    assert rows[0][1][7] == "102,00 EUR"
+    assert rows[0][2] == "rebalance_underweight"
+    assert rows[1][1][1] == "Non calcolabile"
+    assert rows[1][1][5] == "-"
+    assert rows[1][2] == "warning_row"
     assert asset_class_tag("Alternativi") == "asset_alternativi"
     assert asset_class_tag("TOTALE") == "asset_totale"
 

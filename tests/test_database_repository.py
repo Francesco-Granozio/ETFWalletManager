@@ -5,6 +5,8 @@ from sqlalchemy import text
 from app.db.database import create_session_factory, init_database
 from app.db.repositories import PortfolioRepository
 from app.domain import (
+    DashboardSnapshot,
+    DashboardSnapshotRow,
     DEFAULT_PAC_EXECUTION_SCHEDULE,
     EtfMetadata,
     HistoricalPriceQuote,
@@ -207,6 +209,85 @@ def test_repository_refreshes_saved_pac_and_execution_provider_data_without_recr
         assert row.previous_price is None
         assert row.price_diff is None
         assert row.price_diff_pct is None
+
+
+def test_repository_saves_and_loads_latest_dashboard_snapshot(tmp_path):
+    db_path = tmp_path / "portfolio.db"
+    session_factory = create_session_factory(db_path)
+    init_database(session_factory)
+
+    first = DashboardSnapshot(
+        total_invested=100,
+        current_value=110,
+        result_value=10,
+        result_pct=0.10,
+        latest_live_price_date=date(2026, 6, 8),
+        execution_count=1,
+        etf_count=1,
+        quote_error_count=0,
+        rows=[
+            DashboardSnapshotRow(
+                asset_class="Azioni",
+                segment="S&P 500",
+                name="ETF Azionario",
+                isin="IE000XZSV718",
+                invested_amount=100,
+                units=10,
+                missing_data=False,
+                live_price=11,
+                live_price_date=date(2026, 6, 8),
+                live_price_source="Lang & Schwarz LSX",
+                current_value=110,
+                result_value=10,
+                execution_count=1,
+            )
+        ],
+    )
+    second = DashboardSnapshot(
+        total_invested=200,
+        current_value=None,
+        result_value=None,
+        result_pct=None,
+        latest_live_price_date=None,
+        execution_count=2,
+        etf_count=1,
+        quote_error_count=1,
+        rows=[
+            DashboardSnapshotRow(
+                asset_class="Azioni",
+                segment="S&P 500",
+                name="ETF Azionario",
+                isin="IE000XZSV718",
+                invested_amount=200,
+                units=0,
+                missing_data=True,
+                live_price=None,
+                live_price_date=None,
+                live_price_source="",
+                current_value=None,
+                result_value=None,
+                execution_count=2,
+            )
+        ],
+    )
+
+    with session_factory() as session:
+        repo = PortfolioRepository(session)
+        repo.save_dashboard_snapshot(first)
+        repo.save_dashboard_snapshot(second)
+        session.commit()
+
+    with session_factory() as session:
+        snapshot = PortfolioRepository(session).latest_dashboard_snapshot()
+
+    assert snapshot is not None
+    assert snapshot.id is not None
+    assert snapshot.total_invested == 200
+    assert snapshot.current_value is None
+    assert snapshot.quote_error_count == 1
+    assert len(snapshot.rows) == 1
+    assert snapshot.rows[0].missing_data is True
+    assert snapshot.rows[0].invested_amount == 200
 
 
 def test_repository_replaces_portfolio_from_manual_pac_preview(tmp_path):

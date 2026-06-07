@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 
-from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, String, UniqueConstraint
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -195,6 +195,50 @@ class PacExecutionRowModel(Base):
     price_diff_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     execution: Mapped[PacExecutionModel] = relationship(back_populates="rows")
+
+
+class DashboardSnapshotModel(Base):
+    __tablename__ = "dashboard_snapshots"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    captured_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, nullable=False, index=True)
+    total_invested: Mapped[float] = mapped_column(Float, nullable=False)
+    current_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    result_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    result_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    latest_live_price_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    execution_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    etf_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    quote_error_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    rows: Mapped[list[DashboardSnapshotRowModel]] = relationship(
+        back_populates="snapshot",
+        cascade="all, delete-orphan",
+        order_by="DashboardSnapshotRowModel.sort_order",
+    )
+
+
+class DashboardSnapshotRowModel(Base):
+    __tablename__ = "dashboard_snapshot_rows"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    snapshot_id: Mapped[int] = mapped_column(ForeignKey("dashboard_snapshots.id"), nullable=False, index=True)
+    sort_order: Mapped[int] = mapped_column(default=0, nullable=False)
+    asset_class: Mapped[str] = mapped_column(String(80), nullable=False)
+    segment: Mapped[str] = mapped_column(String(160), nullable=False)
+    name: Mapped[str] = mapped_column(String(260), nullable=False)
+    isin: Mapped[str] = mapped_column(String(12), nullable=False, index=True)
+    invested_amount: Mapped[float] = mapped_column(Float, nullable=False)
+    units: Mapped[float] = mapped_column(Float, nullable=False)
+    missing_data: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    live_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    live_price_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    live_price_source: Mapped[str] = mapped_column(String(80), default="", nullable=False)
+    current_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    result_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    execution_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    snapshot: Mapped[DashboardSnapshotModel] = relationship(back_populates="rows")
 
 
 class PortfolioSnapshotModel(Base):

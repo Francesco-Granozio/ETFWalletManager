@@ -6,6 +6,8 @@ from sqlalchemy import Select, delete, func, select
 from sqlalchemy.orm import Session
 
 from app.domain import (
+    DashboardSnapshot,
+    DashboardSnapshotRow,
     DEFAULT_PAC_EXECUTION_SCHEDULE,
     EtfMetadata,
     HistoricalPriceQuote,
@@ -19,6 +21,8 @@ from app.domain import (
     SavedPacSimulation,
 )
 from app.db.models import (
+    DashboardSnapshotModel,
+    DashboardSnapshotRowModel,
     EtfMetadataCacheModel,
     EtfModel,
     HoldingModel,
@@ -560,6 +564,52 @@ class PortfolioRepository:
             raise ValueError(f"PAC execution not found: {execution_id}")
         self.session.delete(model)
 
+    def save_dashboard_snapshot(self, snapshot: DashboardSnapshot) -> DashboardSnapshot:
+        model = DashboardSnapshotModel(
+            captured_at=snapshot.captured_at or datetime.now(UTC),
+            total_invested=snapshot.total_invested,
+            current_value=snapshot.current_value,
+            result_value=snapshot.result_value,
+            result_pct=snapshot.result_pct,
+            latest_live_price_date=snapshot.latest_live_price_date,
+            execution_count=snapshot.execution_count,
+            etf_count=snapshot.etf_count,
+            quote_error_count=snapshot.quote_error_count,
+        )
+        self.session.add(model)
+        self.session.flush()
+
+        for index, row in enumerate(snapshot.rows):
+            self.session.add(
+                DashboardSnapshotRowModel(
+                    snapshot_id=model.id,
+                    sort_order=index,
+                    asset_class=row.asset_class,
+                    segment=row.segment,
+                    name=row.name,
+                    isin=row.isin,
+                    invested_amount=row.invested_amount,
+                    units=row.units,
+                    missing_data=row.missing_data,
+                    live_price=row.live_price,
+                    live_price_date=row.live_price_date,
+                    live_price_source=row.live_price_source,
+                    current_value=row.current_value,
+                    result_value=row.result_value,
+                    execution_count=row.execution_count,
+                )
+            )
+        self.session.flush()
+        return self._to_dashboard_snapshot(model)
+
+    def latest_dashboard_snapshot(self) -> DashboardSnapshot | None:
+        model = self.session.scalars(
+            select(DashboardSnapshotModel)
+            .order_by(DashboardSnapshotModel.captured_at.desc(), DashboardSnapshotModel.id.desc())
+            .limit(1)
+        ).first()
+        return self._to_dashboard_snapshot(model) if model else None
+
     def find_price(self, etf_id: int, target_date: date) -> float | None:
         exact = self._price_query(etf_id).where(PriceHistoryModel.date == target_date)
         price = self.session.scalar(exact)
@@ -728,6 +778,40 @@ class PortfolioRepository:
             created_at=model.created_at,
             updated_at=model.updated_at,
             rows=[_to_pac_execution_row(row) for row in model.rows],
+        )
+
+    @staticmethod
+    def _to_dashboard_snapshot(model: DashboardSnapshotModel) -> DashboardSnapshot:
+        return DashboardSnapshot(
+            id=model.id,
+            captured_at=model.captured_at,
+            total_invested=model.total_invested,
+            current_value=model.current_value,
+            result_value=model.result_value,
+            result_pct=model.result_pct,
+            latest_live_price_date=model.latest_live_price_date,
+            execution_count=model.execution_count,
+            etf_count=model.etf_count,
+            quote_error_count=model.quote_error_count,
+            rows=[
+                DashboardSnapshotRow(
+                    id=row.id,
+                    asset_class=row.asset_class,
+                    segment=row.segment,
+                    name=row.name,
+                    isin=row.isin,
+                    invested_amount=row.invested_amount,
+                    units=row.units,
+                    missing_data=row.missing_data,
+                    live_price=row.live_price,
+                    live_price_date=row.live_price_date,
+                    live_price_source=row.live_price_source,
+                    current_value=row.current_value,
+                    result_value=row.result_value,
+                    execution_count=row.execution_count,
+                )
+                for row in model.rows
+            ],
         )
 
 

@@ -116,6 +116,8 @@ def treeview_tag_colors(appearance_mode: str | None = None) -> dict[str, tuple[s
             "asset_totale": ("#16A34A", "#FFFFFF"),
             "asset_unknown": ("#374151", "#F9FAFB"),
             "warning_row": ("#7F1D1D", "#FEE2E2"),
+            "rebalance_underweight": ("#064E3B", "#D1FAE5"),
+            "rebalance_overweight": ("#7F1D1D", "#FEE2E2"),
             "etf_row": ("#111827", "#F9FAFB"),
         }
     return {
@@ -126,6 +128,8 @@ def treeview_tag_colors(appearance_mode: str | None = None) -> dict[str, tuple[s
         "asset_totale": ("#6AA84F", "#111827"),
         "asset_unknown": ("#E5E7EB", "#111827"),
         "warning_row": ("#FEE2E2", "#991B1B"),
+        "rebalance_underweight": ("#DCFCE7", "#166534"),
+        "rebalance_overweight": ("#FEE2E2", "#991B1B"),
         "etf_row": ("#F9FAFB", "#111827"),
     }
 
